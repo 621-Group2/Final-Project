@@ -323,7 +323,7 @@ ggplot(stack(cc_dataT[,6:11]), aes(values, fill=ind))+
 ##Bill Amount
 We appear to have some negaive values for bill amount. This likely represents overpayment by the customer and is not problematic. The distributions are similar.
 
-```{r repay, echo=FALSE, message=FALSE, warning=FALSE}
+```{r bill, echo=FALSE, message=FALSE, warning=FALSE}
 
 par(mfrow=(c(1,2)))
 ggplot(stack(cc_dataT[,12:17]), aes(values, fill=ind))+
@@ -342,7 +342,7 @@ ggplot(stack(cc_dataT[,12:17]), aes(x = ind, y = values, fill=ind))+
 ##Pay Amount
 The majority of payments are small with some rather large outliers. 
 
-```{r repay, echo=FALSE, message=FALSE, warning=FALSE}
+```{r pay, echo=FALSE, message=FALSE, warning=FALSE}
 
 par(mfrow=(c(1,2)))
 ggplot(stack(cc_dataT[,18:23]), aes(values, fill=ind))+
@@ -474,23 +474,14 @@ trainY <- subset(train_all, select = target)
 testX <- subset(test_all, select = -target)
 testY <- subset(test_all, select = target)
 
-pca_val <- princomp(trainX)
+pca_val <- princomp(na.omit(trainX))
 
 screeplot(pca_val, type = "lines")
 ```
 
 
 
-```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10}
-#predictions put right next to actual in dataframe
-testY$pred <- predict(plsMod, testX)
 
-
-plot(testY$pred, testY$target)
-
-postResample(testY$pred, testY$target)
-
-```
 
 
 
