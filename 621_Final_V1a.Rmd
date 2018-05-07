@@ -45,7 +45,7 @@ library(reshape2)
 # library(mice)
 # library(stringr)
 # library(dplyr)
-# library(car)
+library(car)
 # library(usdm)
 # library(tidyverse)
 # library(stringr)
@@ -381,8 +381,7 @@ cc_data$MARRIED <- ifelse(cc_data$MARRIAGE==1, 1, 0)
 
 cc_data$MALE <- ifelse(cc_data$SEX==1, 1, 0)
 
-cc_data$EDU_HIGH_SCHOOL_Other <- ifelse(cc_data$EDUCATION %in% c(3,4,5,6,0), 1, 0) 
-cc_data$EDU_COLLEGE <- ifelse(cc_data$EDUCATION== 2, 1, 0)
+cc_data$EDU_COLLEGE <- ifelse(cc_data$EDUCATION %in% c(1, 2), 1, 0)
 cc_data$EDU_ADV_DEGREE <- ifelse(cc_data$EDUCATION == 1, 1, 0) 
 
 cc_dataR <- dplyr::select(cc_data, -EDUCATION, -MARRIAGE, -SEX)
@@ -402,7 +401,7 @@ sapply(cc_dataR,class)
 # cc_data[vars1] <- lapply(cc_data[vars1], ordered)
 
 #unordered
-vars2 <- c("MALE", "MARRIED", "EDU_HIGH_SCHOOL_Other","EDU_ADV_DEGREE", "EDU_COLLEGE","DEFAULT")
+vars2 <- c("MALE", "MARRIED","EDU_ADV_DEGREE", "EDU_COLLEGE","DEFAULT")
 cc_dataR[vars2] <- lapply(cc_dataR[vars2], factor)
 
 
@@ -459,6 +458,9 @@ all_model_metrics <- rbind(all_model_metrics, m2[[1]])
 all_roc_curves[[2]] <- m2[[2]]
 
 all_predictions[[2]] <- m2[[3]]
+
+summary(model1)
+vif(model1)
 ```
 
 ##Model 2
@@ -468,15 +470,15 @@ all_predictions[[2]] <- m2[[3]]
 As mentioned earlier we have quite a bit of collinearity among predictors, as demonstrated by the screeplot below; the variability accounted for by each component drops sharpely within the first few components. 
 
 ```{r}
-trainX <- subset(train_all, select = -target)
-trainY <- subset(train_all, select = target)
-
-testX <- subset(test_all, select = -target)
-testY <- subset(test_all, select = target)
-
-pca_val <- princomp(na.omit(trainX))
-
-screeplot(pca_val, type = "lines")
+# trainX <- subset(train_all, select = -target)
+# trainY <- subset(train_all, select = target)
+# 
+# testX <- subset(test_all, select = -target)
+# testY <- subset(test_all, select = target)
+# 
+# pca_val <- princomp(na.omit(trainX))
+# 
+# screeplot(pca_val, type = "lines")
 ```
 
 
