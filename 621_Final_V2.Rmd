@@ -531,18 +531,18 @@ set.seed(4784)
 train_index <- sample(seq_len(nrow(cc_dataN)), size = smp, replace = FALSE)
 
 train_all <- cc_dataN[train_index, ]
+#write.csv(train_all, "trainData")
+
 test_all <- cc_dataN[-train_index, ]
+#write.csv(test_all, "testData")
 
 
-model2 <- glm(target ~ .,
-             data=train_all,
-             family = binomial(link="logit"))
-
+#Stepwise variable selection of model2
 model2step <- step(model2, direction="both", trace=0)
 
 summary(model2step)
 
-
+#modified model metrics with stepwise variable selection
 m2<- calc_metrics("Model2 - STEP", model2step, test_all, train_all, show=F)
 all_model_metrics <- rbind(all_model_metrics, m2[[1]])
 
