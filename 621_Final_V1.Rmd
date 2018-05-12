@@ -1,0 +1,204 @@
+---
+title: "621-Final Project"
+author: "Brian Kreis"
+date: "May 1, 2018"
+output: word_document
+---
+
+---
+title: 'Group#2 Homework #4'
+author: "Group 2"
+date: "4/8/2018"
+output:
+  html_document: default
+  pdf_document:
+    latex_engine: lualatex
+  word_document: default
+---
+
+#Introduction
+Our project team has obtained a data set containing 30,000 observations, with each observation representing a credit card customer. Variables included in the data set provide information on that customer's payment history, outstanding balances as well as demographic information. It is our task to develop a binary logistic regression model to predict the probability that a customer will be in default of their next scheduled payment. The data set contains our default payment response variable, which is binary (0,1), an ID field, and 23 predictor variables. We will break the data set into a training and test set for our evaluation. 
+
+The objective is to build multiple binary logistic regression models on the training data to predict the probability that a person will be in default of payment. We will then run analysis to determine which model performed best. 
+
+This model may be useful for financial institutions who provide revolving credit facilities to determine which customers may need intervention, including where reduction in the size of the outstanding credit facility would be prudent. 
+
+
+##Team Members
+-Valerie Briot
+-Michael D'acampora
+-Keith Folsom
+-Brian Kreis
+-Sharon Morris
+
+
+
+```{r libraries, echo=FALSE, message=FALSE, warning=FALSE}
+library(psych)
+library(GGally)
+library(ggplot2)
+# library(reshape)
+# library(VIM)
+# library(mice)
+# library(stringr)
+# library(dplyr)
+# library(car)
+# library(usdm)
+# library(tidyverse)
+# library(stringr)
+library(DataExplorer)
+library(knitr)
+# library(corrplot)
+# library(MASS)
+# library(tinytex)
+# library(ggfortify)
+# library(caret)
+# 
+# library(pscl)
+# library(MKmisc)
+# library(Metrics)  # for lm metric calculation
+
+# library(gvlma)  ## only used for confirming model assumptions
+
+options(scipen=999)
+
+```
+#Dataset
+For reproducibility of the results, the data was loaded to and accessed from a Github repository. 
+
+```{r Read data, echo=FALSE, message=FALSE, warning=FALSE}
+cc_data <- read.csv("https://raw.githubusercontent.com/621-Group2/Final-Project/master/UCI_Credit_Card.csv", header=TRUE, sep=",")
+
+#Remove the id from the dataset
+cc_data$ID <- NULL
+
+#Simplify name of response
+colnames(cc_data)[24] <- "DEFAULT" 
+
+
+
+
+
+
+
+# get_outliers function
+get_outliers <-  function(x, n = 10) {
+  
+  bp <- boxplot.stats(x)
+  
+  obs_hi <- unique(x[which(x > bp$stats[5])])
+
+  if (length(obs_hi) < n) { n <- length(obs_hi) }
+
+  hi <- sort(obs_hi, decreasing = T)[1:n]
+  
+  obs_low <- unique(x[which(x < bp$stats[1])])
+
+  if (length(obs_low) < n) { n <- length(obs_low) }
+
+  low <- sort(obs_low, decreasing = T)[1:n]
+
+  return (list(Hi=hi, Low=low))
+  
+}  
+
+
+```
+#Data Exploration and Statistic Measures
+The purpose of the data exploration and statistic measures phase is to understand the data to determine how to process the dataset for modelling. 
+
+##Missing and Zero Values
+The data does not contain missing values and as such no imputation will be necessary.
+
+
+
+```{r miss_plot, echo=FALSE, message=FALSE, warning=FALSE}
+
+plot_missing(cc_data, title="Credit Card Data - Missing Values (%)")
+
+```
+
+##Variable to Variable Analysis
+```{r data exploration, echo=FALSE, message=FALSE, warning=FALSE}
+
+Variable <- colnames(cc_data)
+
+Definition <- c("Amount of given credit in NT dollars", "Gender (1=male, 2=female)", "(1=graduate school, 2=university, 3=high school, 4=others, 5=unknown, 6=unknown)", "Marital status (1=married, 2=single, 3=others)", "Age in Years", "Repayment status in September, 2005", "Repayment status in August, 2005", "Repayment status in July, 2005", "Repayment status in June, 2005", "Repayment status in May, 2005", "Repayment status in April, 2005", "Amount of bill statement in September, 2005", "Amount of bill statement in August, 2005", "Amount of bill statement in July, 2005", "Amount of bill statement in June, 2005", "Amount of bill statement in May, 2005", "Amount of bill statement in April, 2005", " Amount of previous payment in September, 2005", " Amount of previous payment in August, 2005", " Amount of previous payment in July, 2005", " Amount of previous payment in June, 2005", " Amount of previous payment in May, 2005", " Amount of previous payment in April, 2005", "Default payment (1=yes, 0=no)")
+
+card_sum <- cbind.data.frame (Variable, Definition)
+
+card_sum$Type <- "Predictor"
+card_sum[24,3] <- "Response"
+
+knitr::kable(card_sum)
+```
+
+##Descriptive Statistics
+
+Descriptive statistics was performed for all predictor and response variables to explore the data. 
+
+```{r descriptive statistics, echo=FALSE, message=FALSE, warning=FALSE}
+
+#Use Describe Package to calculate Descriptive Statistic
+(CC_des <- describe(cc_data, na.rm=TRUE, interp=FALSE, skew=TRUE, ranges=TRUE, trim=.1, type=3, check=TRUE, fast=FALSE, quant=c(.1,.25,.75,.90), IQR=TRUE))
+
+```
+
+
+```{r}
+#Ordered Factors
+#Check for data type
+sapply(cc_data,class)
+
+#convert categorical to factor variables so that R can create dummy variables
+#ordered
+vars1 <- c("EDUCATION", "PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6")
+cc_data[vars1] <- lapply(cc_data[vars1], ordered)
+
+#unordered
+vars2 <- c("SEX", "MARRIAGE", "DEFAULT")
+cc_data[vars2] <- lapply(cc_data[vars2], factor)
+
+#Check ordering 
+table(cc_data$PAY_0)
+```
+
+
+
+##Correlation Analysis
+As shown below there is high collinearity among variables where we would expect it to occur. For instance in Bill Amount, for which we have 6 variables all corresponding to months, we would expect a relation between the amount someone owes one month and the amount that they owe the next. This is also true of the Payment Amount variable, for which we also have 6 sequential months of data for.
+
+Also as we would expect, the DEFAULT variable is most strongly correlated with the payment status 
+
+The tables below represent correlation between response and predictor variables.
+
+```{r correlation, echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10}
+ggcorr(cc_data, method = "pairwise", label=TRUE, nbreaks=6)
+
+
+```
+
+
+```{r}
+ggplot(stack(cc_data[,12:23]), aes(values, fill=ind))+
+  facet_wrap(~ind, scales = "free") + 
+  geom_histogram(binwidth = 50000) +
+  theme(legend.position="none")
+
+
+```
+
+
+
+##OLDCLAIM 
+The distribution OLDCLAIM is highly skewed to the left. There are several outliers on the higher end.
+
+```{r oldclaim, echo=FALSE, message=FALSE, warning=FALSE}
+par(mfrow=c(1,2))
+oldclaimDensity <- density(as.numeric(cc_data$PAY_AMT1))
+plot(oldclaimDensity, main="Total Claims (Past 5 Years) ")
+polygon(oldclaimDensity, col="red", border="red")
+
+boxplot(as.numeric(insurance_train$OLDCLAIM, main="Total Claims (Past 5 Years) "), col="blue")
+```
+
