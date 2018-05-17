@@ -1,0 +1,106 @@
+---
+title: "network"
+author: "Group 3"
+date: "5/11/2018"
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+library(neuralnet)
+library(plyr)
+library(knitr)
+```
+
+#Nueral Network
+A Nueral Netowrk model was used to fit the credit card dataset. A nueral network processes the data on several levels.The first layer of the neural network receives the predictor variables which are processed and passed to the hidden layer. The hidden layer passes the processed predictor values to the last layer where the output is produced
+
+A nueral network model was chosen to predict default based on its ability to learn form the information provided.
+
+##Data Preprocessing
+As neural networks use activation functions between -1 and +1 - the variables were scaled down. This is done to prevent the neural network from spend training iterations doing the scaling.
+
+Min-max normalziation was used to transform the data into a common range.This removes the scaling effect from all the variables.
+
+The normalzied data returns a matrix that was converted to a dataframe so that the neural network model can be computed. 
+
+```{r, echo=FALSE}
+
+CreditCard <- read.csv("https://raw.githubusercontent.com/621-Group2/Final-Project/master/UCI_Credit_Card.csv")
+CreditCardnn <- CreditCard
+
+#Normalize dataset
+maxValue <- apply(CreditCardnn, 2, max)
+minValue <- apply(CreditCardnn, 2, min)
+
+CreditCardnn <- as.data.frame(scale(CreditCardnn, center = minValue, scale = maxValue - minValue))
+
+kable(print(head(CreditCardnn, 2)))
+
+#Rename to target variable
+colnames(CreditCardnn)[25] <- "target"
+
+
+smp <- floor(0.70 * nrow(CreditCardnn))
+set.seed(4784)
+
+CreditCardnn$ID <- NULL
+train_index <- sample(seq_len(nrow(CreditCardnn)), size = smp, replace = FALSE)
+
+train_nn <- CreditCardnn[train_index, ]
+test_nn <- CreditCardnn[-train_index, ]
+
+allVars <- colnames(CreditCardnn)
+predictorVars <- allVars[!allVars%in%'target']
+predictorVars <- paste(predictorVars, collapse = "+")
+(f <- as.formula(paste("target~", predictorVars, collapse = "+")))
+
+
+```
+##Train the Neural Network
+The neural network was calculated using the neuralnet library. There are 2 hidden units in the third layer and 4 hidden units in the second layer. 
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#nueralModel <- neuralnet(formula = f, hidden = c(4,2), linear.output = T, data = train_nn)
+
+nueralModel <- neuralnet(formula = f,linear.output = T, data = train_nn)
+
+```
+
+##Plot Nueral Network
+The neural network plot represents the weights of each connection. The visualization show the 3 hidden layers. 
+
+The black lines of the model represent the connections with weights.The weights are calculated using the back propagation algorithm.  The blue line displays the bias term
+
+##Nueral Network Matrix
+The matrix shows the training process required 13,017 steps until all absolute partial derivatives of the error function were smaller than 0.01, which is the default threshold. The estimated weights ranged between -1.38 and 0.75
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+plot(nueralModel)
+
+
+library(knitr)
+kable(nueralModel$result.matrix)
+```
+##Generalized Weights
+The gerneralized weights for the demographic covariates shows that they all have and effect on the target varaible.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+par(mfrow=c(2,2))
+gwplot(nueralModel, selected.covariate="SEX", min=-2.5, max=5)
+gwplot(nueralModel, selected.covariate="EDUCATION",
+              min=-2.5, max=5)
+gwplot(nueralModel, selected.covariate="MARRIAGE",
+              min=-2.5, max=5)
+gwplot(nueralModel, selected.covariate="AGE",
+             min=-2.5, max=5)
+```
+
+
+
+#References
+https://datascienceplus.com/fitting-neural-network-in-r/
+https://www.youtube.com/watch?v=LTg-qP9iGFY
+https://www.analyticsvidhya.com/blog/2017/09/creating-visualizing-neural-network-in-r/
