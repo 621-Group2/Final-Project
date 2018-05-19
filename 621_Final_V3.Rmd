@@ -32,7 +32,7 @@ output:
 Financial instititutions seek to minimize risk by identifying credit card holders who are likely to default on a payment. This research endeavors to apply and explore multiple classification techiques against the UCI credit card default dataset to determine which model provides the most predictive accuracy in identifying defaulters.  We evaluate the following classifiers -- binary logistic regression, ridge and Lasso logistic regression, decision tree, Naive Bayes, and neural net.  The classifier with the best predictive power as determined by accuracy, mse, rmse, F1, and kappa (TBD) will then be used with subsampling techniques to potentially further improve accuracy occuring from imbalance that may be present in the response variable.
 
 
-#Key words
+#Keywords
 classifction, UCI credit card dataset, binary logistic, ridge regression, LASSO, Naive Bayes, neural net, class imbalance
 
 #Introduction
@@ -43,10 +43,10 @@ The objective is to build multiple classifiction models on the training data to 
 This model may be useful for financial institutions who provide revolving credit facilities to determine which customers may need intervention, including where reduction in the size of the outstanding credit facility would be prudent. 
 
 The paper is organized into the following sections:  
-* __Literature Review__ describes similar published research on the topic of financial risk management through the use of data mining and classification to identify credit card default and, a similar and related field, fraud detection  
-* __Methodology__ describes the approach and techniques used 
-* __Experimentation and Results__ provides an exploratory overview of the dataset and details the results of the models
-* __Discussion and Conclusions__ statesconcludes and identifies further areas of work
+* __Literature Review__ describes similar published research on the topic of financial risk management through the use of data mining and classification to identify credit card default and, a similar and related field, fraud detection    
+* __Methodology__ describes the approach and techniques used in this research  
+* __Experimentation and Results__ provides an exploratory overview of the dataset and details the results of the models  
+* __Discussion and Conclusions__ statesconcludes and identifies further areas of work  
 
 
 
