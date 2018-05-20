@@ -3,6 +3,7 @@ title: "621-Final Project"
 author: "Brian Kreis"
 date: "May 1, 2018"
 output:
+  word_document: default
   html_document:
     df_print: paged
 ---
@@ -26,6 +27,7 @@ library(DataExplorer)
 library(knitr)
 # library(corrplot)
 library(MASS)
+library(Metrics)
 # library(tinytex)
 # library(ggfortify)
 library(caret)
@@ -34,12 +36,9 @@ library(MKmisc)
 library(Metrics)
 library(pROC)
 library(rpart)
-#library(Boruta)
+library(rpart.plot)
 library(glmnet)
 library(neuralnet)
-#library(plyr)
-#library(knitr)
-
 
 # library(gvlma)  ## only used for confirming model assumptions
 
@@ -47,7 +46,7 @@ options(scipen=999)
 
 ```
 
-For reproducibility of the results, the data was loaded to and accessed from a Github repository. 
+
 
 ```{r Read data, echo=FALSE, message=FALSE, warning=FALSE}
 
@@ -89,50 +88,48 @@ all_model_metrics <- data.frame()
 all_roc_curves <- list()
 all_predictions <- list()
 
-calc_metrics <- function(model_name, model, test, train, show=FALSE) {
-  
+calc_metrics <- function(model_name, 
+                         model, 
+                         test, 
+                         train) {
   
   pred_model <- predict(model, test, type = 'response')
   y_pred_model <- as.factor(ifelse(pred_model > 0.5, 1, 0))
-  
-  # psedo R2 value (McFaden):
-  McFadenR2_value <- pR2(model)[[4]]
-  
-  # Hosmer L    Test:
-  #HosmerL_value <- HLgof.test(fit = fitted(model), obs = train$target)
-  #HL_Chi_value <- unname(HosmerL_value$C[1]$statistic[1])
-  #HL_p_value <- unname(HosmerL_value$C[3]$p.value[1])
-  # Handle very low p-value
-  #HL_p_value_limit <- 2.2*(10^(-16))
-  #HL_p_value_flag <- ' '
-  #if (HL_p_value <= HL_p_value_limit) {
-  #  HL_p_value_flag <- '*'
-  #  HL_p_value <- HL_p_value_limit
-  #}
+
+  compare <- cbind (actual=test$target, y_pred_model)  # combine
   
   # Confusion Matrix
   cm <- confusionMatrix(test$target, y_pred_model, positive = "1", mode="everything" ) 
   
+  accuracy <- cm$overall[[1]]
   kappa_value <- cm$overall[[2]]
   youden_value <- cm$byClass[[1]] - (1 - cm$byClass[[2]])
   F1Score_value <- cm$byClass[[7]]
   FP_value <- (cm$table[2,1]/nrow(test))*100
   
   #AUC
-  AUC_value <- auc(test$target, pred_model)
+  #AUC_value <- auc(as.numeric(test$target), pred_model)
   
   cm_df <- data.frame(Model=model_name, 
+                      Accuracy=round(accuracy, 3),
                       AIC=round(AIC(model), 3), 
                       BIC=round(BIC(model), 3), 
-                      McFadenR2 = round(McFadenR2_value, 3), 
-                      #HL_Chi = round(HL_Chi_value, 3),
-                      #HL_p = HL_p_value, 
-                      #'*' = HL_p_value_flag, 
+                      MAE=Metrics::mae(compare[, 1], compare[, 2]),
+                      MAPE=Metrics::mape(compare[, 1], compare[, 2]),     #MAPE calculates the mean absolute percentage error:
+                      MSE=Metrics::mse(compare[, 1], compare[, 2]),       #MSE calculates mean squared error
+                      RMSE=Metrics::rmse(compare[, 1], compare[, 2]),
                       Kappa = round(kappa_value, 3), 
                       Youden = round(youden_value, 3), 
                       F1Score = round(F1Score_value, 3),
-                      FPPrct = round(FP_value, 2), 
-                      AUC = round(AUC_value[[1]], 3))
+                      FPPrct = round(FP_value, 2),
+                      Sensitivity=round(cm$byClass["Sensitivity"], 3),
+                      Specificity=round(cm$byClass["Specificity"], 3),
+                      PosPredValue=round(cm$byClass["Pos Pred Value"], 3),
+                      NegPredValue=round(cm$byClass["Neg Pred Value"], 3),
+                      Precision=round(cm$byClass["Precision"], 3),
+                      Recall=round(cm$byClass["Recall"], 3),
+                      BalancedAccuracy=round(cm$byClass["Balanced Accuracy"], 3)
+                      )
   
   #cbind(t(cm$overall),t(cm$byClass)))
   
@@ -141,18 +138,136 @@ calc_metrics <- function(model_name, model, test, train, show=FALSE) {
   
   # Result
   result <- list(cm_df, roc_model, pred_model)
-  if (show) { 
+
+  return (result)
+  
+}
+
+## this for used for the ridge and lasso regression models
+calc_metrics_2 <- function(model_name, 
+                           model, 
+                           test, 
+                           train, 
+                           s,
+                           y_test) {
+  
     
-    # calculate AIC/BIC
-    print(paste("AIC= ", round(AIC(model), 3)))
-    print(paste("BIC= ", round(BIC(model), 3)))
-    print("")
+  pred_model <- predict(model, newx = test, s=s, type="response")
+  y_pred_model <- as.factor(ifelse(pred_model > 0.5, 1, 0))
+     
+  compare <- cbind (actual=y_test, y_pred_model)  # combine
+  
+  # Confusion Matrix
+  cm <- confusionMatrix(as.factor(y_test), y_pred_model, positive = "1", mode="everything" ) 
+  
+  accuracy <- cm$overall[[1]]
+  kappa_value <- cm$overall[[2]]
+  youden_value <- cm$byClass[[1]] - (1 - cm$byClass[[2]])
+  F1Score_value <- cm$byClass[[7]]
+  FP_value <- (cm$table[2,1]/nrow(test))*100
+  
+  #AUC
+  #AUC_value <- auc(as.numeric(test$target), pred_model)
+  
+  cm_df <- data.frame(Model=model_name, 
+                      Accuracy=round(accuracy, 3),
+                      AIC=NA, 
+                      BIC=NA, 
+                      MAE=Metrics::mae(compare[, 1], compare[, 2]),
+                      MAPE=Metrics::mape(compare[, 1], compare[, 2]),     #MAPE calculates the mean absolute percentage error:
+                      MSE=Metrics::mse(compare[, 1], compare[, 2]),       #MSE calculates mean squared error
+                      RMSE=Metrics::rmse(compare[, 1], compare[, 2]),
+                      Kappa = round(kappa_value, 3), 
+                      Youden = round(youden_value, 3), 
+                      F1Score = round(F1Score_value, 3),
+                      FPPrct = round(FP_value, 2),
+                      Sensitivity=round(cm$byClass["Sensitivity"], 3),
+                      Specificity=round(cm$byClass["Specificity"], 3),
+                      PosPredValue=round(cm$byClass["Pos Pred Value"], 3),
+                      NegPredValue=round(cm$byClass["Neg Pred Value"], 3),
+                      Precision=round(cm$byClass["Precision"], 3),
+                      Recall=round(cm$byClass["Recall"], 3),
+                      BalancedAccuracy=round(cm$byClass["Balanced Accuracy"], 3)
+                      )
+  
+  #cbind(t(cm$overall),t(cm$byClass)))
+  
+  # ROC Curves 
+  roc_model <- roc(as.numeric(y_test) ~ as.numeric(pred_model), data = as.data.frame(test))
+  
+  # Result
+  result <- list(cm_df, roc_model, pred_model)
+
+  return (result)
+  
+}
+
+## used for neuralnet and decision tree
+calc_metrics_3 <- function(model_name, 
+                           model, 
+                           test, 
+                           train,
+                           type=NULL,
+                           y_test=NULL) {
+  
+  if (type=="nnet") {
+    pred_model <- neuralnet::compute(model, test[, -23])$net.result
+    y_pred_model      <- as.factor( ifelse(pred_model > 0.5, 1, 0) )
+    target <- y_test
+  }
+  else { 
     
-    print(cm)
-    
-    fourfoldplot(cm$table)
+    pred_model <- predict(model, test, type = "prob")[,"1"]
+    y_pred_model      <- as.factor(ifelse(pred_model > 0.5, 1, 0))
+    target <- test$target
   }
   
+  
+  #y_pred_model      <- factor( ifelse(pred_model > 0.5, 1, 0) )
+
+  compare <- cbind (actual=target, y_pred_model)  # combine
+  
+  # Confusion Matrix
+  cm <- confusionMatrix(as.factor(target), y_pred_model, positive = "1", mode="everything" ) 
+  
+  accuracy <- cm$overall[[1]]
+  kappa_value <- cm$overall[[2]]
+  youden_value <- cm$byClass[[1]] - (1 - cm$byClass[[2]])
+  F1Score_value <- cm$byClass[[7]]
+  FP_value <- (cm$table[2,1]/nrow(test))*100
+  
+  #AUC
+  #AUC_value <- auc(as.numeric(test$target), pred_model)
+  
+  cm_df <- data.frame(Model=model_name, 
+                      Accuracy=round(accuracy, 3),
+                      AIC=NA, 
+                      BIC=NA, 
+                      MAE=Metrics::mae(compare[, 1], compare[, 2]),
+                      MAPE=Metrics::mape(compare[, 1], compare[, 2]),     #MAPE calculates the mean absolute percentage error:
+                      MSE=Metrics::mse(compare[, 1], compare[, 2]),       #MSE calculates mean squared error
+                      RMSE=Metrics::rmse(compare[, 1], compare[, 2]),
+                      Kappa = round(kappa_value, 3), 
+                      Youden = round(youden_value, 3), 
+                      F1Score = round(F1Score_value, 3),
+                      FPPrct = round(FP_value, 2),
+                      Sensitivity=round(cm$byClass["Sensitivity"], 3),
+                      Specificity=round(cm$byClass["Specificity"], 3),
+                      PosPredValue=round(cm$byClass["Pos Pred Value"], 3),
+                      NegPredValue=round(cm$byClass["Neg Pred Value"], 3),
+                      Precision=round(cm$byClass["Precision"], 3),
+                      Recall=round(cm$byClass["Recall"], 3),
+                      BalancedAccuracy=round(cm$byClass["Balanced Accuracy"], 3)
+                      )
+  
+  #cbind(t(cm$overall),t(cm$byClass)))
+  
+  # ROC Curves 
+  roc_model <- roc(as.numeric(target) ~ as.numeric(pred_model), data = as.data.frame(test))
+  
+  # Result
+  result <- list(cm_df, roc_model, pred_model)
+
   return (result)
   
 }
@@ -185,6 +300,7 @@ The objective is to build multiple classifiction models on the training data to 
 This model may be useful for financial institutions who provide revolving credit facilities to determine which customers may need intervention, including where reduction in the size of the outstanding credit facility would be prudent. 
 
 The paper is organized into the following sections:  
+
 * __Literature Review__ reviews similar research published on the topic of financial risk management using data mining and classification to identify credit card default and the related field of fraud detection    
 * __Methodology__ describes the approach and techniques used in this research  
 * __Experimentation and Results__ provides an exploratory overview of the dataset and details the results of the models  
@@ -297,10 +413,11 @@ Model selection is peformed using the performance metrics noted above as the sel
 ## Exploratory Analysis 
 
 ###Missing and Zero Values
+
 The data does not contain missing values and as such no imputation will be necessary.
 
 
-```{r miss_plot, echo=FALSE, message=FALSE, warning=FALSE}
+```{r miss_plot, echo=FALSE, message=FALSE, warning=FALSE, eval = FALSE}
 
 plot_missing(cc_data, title="Credit Card Data - Missing Values (%)")
 
@@ -311,7 +428,7 @@ plot_missing(cc_data, title="Credit Card Data - Missing Values (%)")
 
 Descriptive statistics was performed for all predictor and response variables to explore the data. 
 
-```{r descriptive statistics, echo=FALSE, message=FALSE, warning=FALSE}
+```{r descriptive statistics, echo=FALSE, message=FALSE, warning=FALSE, eval = FALSE }
 
 #Use Describe Package to calculate Descriptive Statistic
 (CC_des <- describe(cc_data, na.rm=TRUE, interp=FALSE, skew=TRUE, ranges=TRUE, trim=.1, type=3, check=TRUE, fast=FALSE, quant=c(.1,.25,.75,.90), IQR=TRUE))
@@ -344,7 +461,9 @@ ggplot(cc_dataT, aes(x = LIMIT_BAL, fill = DEFAULT)) +
   geom_histogram() +
   labs(x = 'Credit Limit') +
   theme_gdocs()
+```
 
+```{r bal2, echo=FALSE, message=FALSE, warning=FALSE, eval=F}
 ggplot(cc_dataT, aes(x=LIMIT_BAL, y=LIMIT_BAL)) + 
   geom_boxplot()+
   theme_pander()
@@ -354,7 +473,7 @@ ggplot(cc_dataT, aes(x=LIMIT_BAL, y=LIMIT_BAL)) +
 ###SEX
 The majority of customers are female. This variable can be made into a dummy variable. 
 
-```{r sex, echo=FALSE, message=FALSE, warning=FALSE}
+```{r sex, echo=FALSE, message=FALSE, warning=FALSE, eval=F}
 ggplot(cc_dataT, aes(x = SEX, fill = DEFAULT)) +
   geom_bar() +
   labs(x = 'SEX') +
@@ -368,7 +487,7 @@ ggplot(cc_dataT, aes(x = SEX, fill = DEFAULT)) +
 ###EDUCATION
 The majority of customers went to university, there are very few in the other/unknown categories as well as an unknown 0 value and we will consider combining these values into dummy variables of College and Advanced Degree, with a 0 value in the College variable representing High School and all other possibilities.  
 
-```{r edu, echo=FALSE, message=FALSE, warning=FALSE}
+```{r edu, echo=FALSE, message=FALSE, warning=FALSE, eval=F}
 ggplot(cc_dataT, aes(x = EDUCATION, fill = DEFAULT)) +
   geom_bar() +
   labs(x = 'EDUCATION') +
@@ -379,7 +498,7 @@ ggplot(cc_dataT, aes(x = EDUCATION, fill = DEFAULT)) +
 
 ###MARRIAGE
 The majority of customers are single and the proportion of default payments appears to be higher for married individual. It appears that there are 0 values here which were not planned. It may be prudent to instead code this as a binary married variable.
-```{r marriage, echo=FALSE, message=FALSE, warning=FALSE}
+```{r marriage, echo=FALSE, message=FALSE, warning=FALSE, eval=F}
 ggplot(cc_dataT, aes(x = MARRIAGE, fill = DEFAULT)) +
   geom_bar() +
   labs(x = 'MARRIAGE') +
@@ -394,7 +513,9 @@ ggplot(cc_dataT, aes(x = AGE, fill = DEFAULT)) +
   geom_histogram() +
   labs(x = 'AGE') +
   theme_pander()
+```
 
+```{r age2, echo=FALSE, message=FALSE, warning=FALSE, eval=F}
 ggplot(cc_dataT, aes(x=AGE, y=AGE)) + 
   geom_boxplot()+
   theme_pander()
@@ -473,7 +594,7 @@ As discussed previously, we will combine values 4, 5 and 6 in education to creat
 
 ###Recode Predictors
 
-```{r}
+```{r recode, echo=FALSE, message=FALSE, warning=FALSE}
 cc_data$MARRIED <- ifelse(cc_data$MARRIAGE==1, 1, 0)
 
 cc_data$MALE <- ifelse(cc_data$SEX==1, 1, 0)
@@ -487,7 +608,7 @@ cc_dataR <- dplyr::select(cc_data, -EDUCATION, -MARRIAGE, -SEX)
 
 ###Change values to factors
 
-```{r}
+```{r factorize, echo=FALSE, message=FALSE, warning=FALSE}
 
 # #Check for data type
 sapply(cc_dataR,class)
@@ -531,7 +652,7 @@ model1 <- glm(DEFAULT ~ .,
              family = binomial(link="logit"))
 
 
-summary(model1)
+#summary(model1)
 car::vif(model1)
 ```
 
@@ -540,7 +661,7 @@ car::vif(model1)
 
 As mentioned earlier we have quite a bit of collinearity among predictors, as demonstrated by the screeplot below; the variability accounted for by each component drops sharpely within the first few components. 
 
-```{r}
+```{r pca, echo=FALSE, message=FALSE, warning=FALSE}
 pca_val <- princomp(subset(cc_dataR, select = -DEFAULT))
 
 screeplot(pca_val, type = "lines")
@@ -575,7 +696,7 @@ ggplot(cc_dataR, aes(x = AVG_BILL_TO_LIMIT)) +
 ```
 
 
-```{r}
+```{r echo=FALSE, message=FALSE, warning=FALSE}
 cc_dataR$INC_COUNT = 0
 for (i in 1:5) {
   cc_dataR$INC_COUNT <- ifelse(cc_dataR[[paste("BILL_AMT",i, sep = "")]] > cc_dataR[[paste("BILL_AMT",i+1, sep = "")]],
@@ -592,7 +713,8 @@ ggplot(cc_dataR, aes(x = INC_COUNT, fill = factor(DEFAULT))) +
 
 
 
-```{r data-prep}
+```{r dataprep, echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10}
+
 cc_dataN <- cc_dataR %>% 
   dplyr::select(-starts_with('BILL_AMT'))
 
@@ -640,11 +762,11 @@ test_nn <- as.data.frame(scale(test_nn, center = minValueTest, scale = maxValueT
 
 ```
 
-## Models
+#Experimentation and Results
 
 ### Binary Logistic Regression Model
 
-```{r binary-logistic} 
+```{r binary-logistic, echo=FALSE, message=FALSE, warning=FALSE} 
 
 model2 <- glm(target ~ .,
              data=cc_dataN,
@@ -655,16 +777,6 @@ summary(model2)
 car::vif(model2)
 
 
-```
-
-
-### Binary Logistic Regression Model Using Stepwise Variable Selection
-
-
-```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10}
-#rename response and split into test and training set 
-
-
 #Stepwise variable selection of model2
 model2step <- step(model2, direction="both", trace=0)
 
@@ -672,45 +784,34 @@ summary(model2step)
 
 #modified model metrics with stepwise variable selection
 
-#m2<- calc_metrics("Model2 - STEP", model2step, test_all, train_all, show=F)
-#all_model_metrics <- rbind(all_model_metrics, m2[[1]])
+m2step_metrics <- calc_metrics("Model2 - STEP", model2step, test_all, train_all)
+all_model_metrics <- rbind(all_model_metrics, m2step_metrics[[1]])
 
 #all_roc_curves[[2]] <- m2[[2]]
 
 #all_predictions[[2]] <- m2[[3]]
+```
+
+```{r binary-logistic-out, echo=FALSE, message=FALSE, warning=FALSE} 
+
+kable(m2step_metrics[[1]])
 
 ```
 
 ### Ridge and Lasso Regularization Generalized Linear
 
 
-Ridge regression, also called L2 Regularization, attempts to avoid overfitting
+Ridge regression, also called L2 Regularization, attempts to avoid overfitting by..
 
 
-```{r ridge}
-
-# https://drsimonj.svbtle.com/ridge-regression-with-glmnet
-# http://ricardoscr.github.io/how-to-use-ridge-and-lasso-in-r.html
-
-# boruta_output <- Boruta(target ~ ., data=na.omit(train_all), doTrace=2)  # perform Boruta search
-# 
-# # 
-# boruta_signif <- names(boruta_output$finalDecision[boruta_output$finalDecision %in% c("Confirmed", "Tentative")])
-# 
-# plot(boruta_output, cex.axis=.7, las=2, xlab="", main="Variable Importance")  #
-
-
-str(train_all)
+```{r ridge, echo=FALSE, message=FALSE, warning=FALSE}
 
 x <- as.matrix(train_all[,-23]) # Removes class
 y <- as.double(as.matrix(train_all[, 23])) # Only class
 
-
 # Fitting the model (Ridge: Alpha = 0)
 
 cv.ridge <- cv.glmnet(x, y, family='binomial', alpha=0,  standardize=TRUE, type.measure='mse')  
-
-
 
 # Results
 plot(cv.ridge)
@@ -721,22 +822,16 @@ coef(cv.ridge, s=cv.ridge$lambda.min)
 ridge_model <- cv.ridge$glmnet.fit
 summary(ridge_model)
 
-#get test data
-#x_test <- model.matrix(target~.,test_all)
+#create test data from test_all, removing the response variable
 x_test <- as.matrix(test_all[,-23]) # Removes class
+y_test <- as.double(as.matrix(test_all[, 23])) # Only class
+
 #predict class, type="class"
 
-ridge_prob <- predict(cv.ridge, newx = x_test, s=cv.ridge$lambda.min,type="response")
+m3ridge_metrics <- calc_metrics_2("Model3 - Ridge", cv.ridge, x_test, x, 
+                                    cv.ridge$lambda.min, y_test)
 
-#translate probabilities to predictions
-ridge_predict <- rep(0,nrow(test_all))
-ridge_predict[ridge_prob>.5] <- 1
-#confusion matrix
-table(pred=ridge_predict,true=test_all$target)
-
-fourfoldplot(table(pred=ridge_predict,true=test_all$target))
-#accuracy
-mean(ridge_predict==test_all$target)
+all_model_metrics <- rbind(all_model_metrics, m3ridge_metrics[[1]])
 
 ```
 
@@ -746,7 +841,7 @@ Lasso regression, also called L1 Regularization, attempts to avoid overfitting
 
 # https://elmorigin.weebly.com/uploads/5/2/9/5/52952487/fernandez-delgado_jmlr_2014.pdf
 
-```{r lasso}
+```{r lasso, echo=FALSE, message=FALSE, warning=FALSE}
 
 cv.lasso <- cv.glmnet(x, y, family='binomial', alpha=1,  standardize=TRUE, type.measure='auc')  
 
@@ -759,26 +854,17 @@ coef(cv.lasso, s=cv.lasso$lambda.min)
 lasso_model <- cv.lasso$glmnet.fit
 summary(lasso_model)
 
-#get test data
-#x_test <- model.matrix(target~.,test_all)
+#create test data from test_all, removing the response variable
 x_test <- as.matrix(test_all[,-23]) # Removes class
-#predict class, type="class"
+y_test <- as.double(as.matrix(test_all[, 23])) # Only class
 
-lasso_prob <- predict(cv.lasso,newx = x_test,s=cv.lasso$lambda.min,type="response")
+m4lasso_metrics <- calc_metrics_2("Model4 - Lasso", cv.lasso, x_test, x, 
+                                    cv.lasso$lambda.1se, y_test)
 
-#translate probabilities to predictions
-lasso_predict <- rep(0,nrow(test_all))
-lasso_predict[lasso_prob>.5] <- 1
-#confusion matrix
-table(pred=lasso_predict,true=test_all$target)
+all_model_metrics <- rbind(all_model_metrics, m4lasso_metrics[[1]])
 
-fourfoldplot(table(pred=lasso_predict,true=test_all$target))
-#accuracy
-mean(lasso_predict==test_all$target)
-
-
-
-
+kable(m3ridge_metrics[[1]])
+kable(m4lasso_metrics[[1]])
 
 ```
 
@@ -787,49 +873,38 @@ mean(lasso_predict==test_all$target)
 
 A basic regression tree was used on this data set to predict default, which partitions the data into smaller groups that are more homogenous with respect to the response. The data were split into training and test sets at a 70:30 ratio.
 
+### grow tree
+
 ```{r desicion-tree}
-library(rpart)
-library(rpart.plot)
-library(Metrics)
 
-#cc_data <- read.csv("https://raw.githubusercontent.com/621-Group2/Final-Project/master/UCI_Credit_Card.csv", header = TRUE)
+m5 <- rpart(target ~ .,  data = train_all, method = 'class')
+m5
 
-#train_data <- read.csv("https://raw.githubusercontent.com/621-Group2/Final-Project/master/trainData.csv", header = TRUE)
-
-#test_data <- read.csv("https://raw.githubusercontent.com/621-Group2/Final-Project/master/testData.csv", header = TRUE)
 
 ```
 
-###Grow Tree
-
-```{r}
-
-# grow tree
-m1 <- rpart(target ~ .,  data = train_all, method = 'anova')
-m1
-
-```
 
 #### Plot and summarize
 
 ```{r}
 # additional plots
 par(mfrow=c(1,2)) 
-rsq.rpart(m1)
+rsq.rpart(m5)
 ```
 
 The relative error is $1-R^2$, similar to linear regression. The xerror is related to the  [PRESS](https://en.wikipedia.org/wiki/PRESS_statistic) statistic. The split from 0 to 1 appears to have the largest improvement of fit. The split from 1 to 2 is much less of an improvement.
 
 The figure to the left shows a visual of the aforementioned first split providing more information than the second split. The figure to the right shows if a tree should be pruned, and in our case it does not. 
 ```{r}
-plotcp(m1) # visualize cross-validation results
+plotcp(m5) # visualize cross-validation results
 
 ```
 
 Looking at the `plotcp` function we can take a look and see if the tree needs pruning, and we can see 3 nodes appears to be the ideal size.
 
 ```{r}
-summary(m1, cp = 0.1) # detailed summary of splits
+summary(m5, cp = 0.1) # detailed summary of splits
+#print(m5)
 ```
 
 Turning to the summary, the first split partitions the 20998 observations into groups of 18789 and 2209 (nodes 2 and 3) with mean values of 0.167 and 0.698, respectively. Variables `PAY_0` and `PAY_2` are weighted highest in importance.
@@ -851,7 +926,8 @@ Turning to the summary, the first split partitions the 20998 observations into g
 A residual plot of predicted values vs. residuals shows 
 
 ```{r}
-rpart.plot(m1, type=3, digits=3, fallen.leaves=TRUE, main='Regression Tree for Credit Card Defaults')
+rpart.plot(m5, type=3, digits=3, fallen.leaves=TRUE, main='Regression Tree for Credit Card Defaults')
+
 ```
 
 Lastly in the plotting section is a visual of the regression tree. The model tells us that if $PAY_-0\geq 1.5$, there is a 69.8% chance the customer will default. Approx 10.5% of the data set falls under this threshold. On the other hand if $PAY_-0< 1.5$, the model takes a look at the customers $`PAY_-2$ scores. If $PAY_-2\geq1.5$ there is a 41.6% chance the customer will default, which comprises of 7.5% of the dataset. Lastly if $PAY_-2<1.5$ there is only a 14.5% chacne of default, which 81.9% of the data set falls under.
@@ -861,16 +937,12 @@ Lastly in the plotting section is a visual of the regression tree. The model tel
 We run prediction on the test data, find the mean absolute error from original data set to predictions and obtain an $MSE$ of 0.139.
 ```{r}
 
-p1 <- predict(m1, test_all)
 
-#confMat <- table(test_data$target, p1)
-#accuracy <- sum(diag(confMat))/sum(confMat)
-#accuracy
-#
-#mse(test_data$target, p1)
-#rmse(test_data$target, p1)
-#mae(test_data$target, p1)
-#se(test_data$target, p1)
+m5_metrics <- calc_metrics_3("Model5 - DT", m5, test_all, train_all, "decision.tree")
+
+all_model_metrics <- rbind(all_model_metrics, m5_metrics[[1]])
+
+kable(m5_metrics[[1]])
 
 
 ```
@@ -878,15 +950,12 @@ p1 <- predict(m1, test_all)
 
 
 
-```{r nnet, echo=FALSE, message=FALSE, warning=FALSE}
 
 
-```
+#Neural Network
+A Neural Netowrk model was used to fit the credit card dataset. A neural network processes the data on several levels.The first layer of the neural network receives the predictor variables which are processed and passed to the hidden layer. The hidden layer passes the processed predictor values to the last layer where the output is produced
 
-#Nueral Network
-A Nueral Netowrk model was used to fit the credit card dataset. A nueral network processes the data on several levels.The first layer of the neural network receives the predictor variables which are processed and passed to the hidden layer. The hidden layer passes the processed predictor values to the last layer where the output is produced
-
-A nueral network model was chosen to predict default based on its ability to learn form the information provided.
+A neural network model was chosen to predict default based on its ability to learn form the information provided.
 
 ##Data Preprocessing
 As neural networks use activation functions between -1 and +1 - the variables were scaled down. This is done to prevent the neural network from spend training iterations doing the scaling.
@@ -895,55 +964,24 @@ Min-max normalziation was used to transform the data into a common range.This re
 
 The normalzied data returns a matrix that was converted to a dataframe so that the neural network model can be computed. 
 
-```{r, echo=FALSE}
-
-#CreditCard <- read.csv("https://raw.githubusercontent.com/621-Group2/Final-Project/master/UCI_Credit_Card.csv")
-#CreditCardnn <- CreditCard
-
-#cc_data <- train_all
-
-#Normalize dataset
-maxValue <- apply(cc_data, 2, max)  #CreditCardnn
-minValue <- apply(cc_data, 2, min)   #CreditCardnn
-
-
-CreditCardnn <- as.data.frame(scale(cc_data, center = minValue, scale = maxValue - minValue))
-
-kable(print(head(cc_data, 2)))
-
-#Rename to target variable
-#colnames(CreditCardnn)[25] <- "target"
-
-#CreditCardnn <- dplyr::rename(CreditCardnn, target=DEFAULT)
-
-
-#smp <- floor(0.70 * nrow(CreditCardnn))
-#set.seed(4784)
-
-#CreditCardnn$ID <- NULL
-#train_index <- sample(seq_len(nrow(CreditCardnn)), size = smp, replace = FALSE)
-
-#train_nn <- CreditCardnn[train_index, ]
-#test_nn <- CreditCardnn[-train_index, ]
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 
 allVars <- colnames(cc_dataN)
 predictorVars <- allVars[!allVars%in%'target']
 predictorVars <- paste(predictorVars, collapse = "+")
 (f <- as.formula(paste("target~", predictorVars, collapse = "+")))
 
-
 ```
 ##Train the Neural Network
 The neural network was calculated using the neuralnet library. There are 2 hidden units in the third layer and 4 hidden units in the second layer. 
-```{r, echo=FALSE, message=FALSE, warning=FALSE}
 
-#nueralModel <- neuralnet(formula = f, hidden = c(4,2), linear.output = T, data = train_nn)
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
 
 neuralModel <- neuralnet(formula = f,linear.output = T, data = train_nn)
 
 ```
 
-##Plot Nueral Network
+##Plot Neural Network
 The neural network plot represents the weights of each connection. The visualization show the 3 hidden layers. 
 
 The black lines of the model represent the connections with weights.The weights are calculated using the back propagation algorithm.  The blue line displays the bias term
@@ -955,7 +993,7 @@ The matrix shows the training process required 13,017 steps until all absolute p
 plot(neuralModel)
 
 
-kable(neuralModel$result.matrix)
+#kable(neuralModel$result.matrix)
 ```
 ##Generalized Weights
 The gerneralized weights for the demographic covariates shows that they all have and effect on the target varaible.
@@ -973,131 +1011,34 @@ The gerneralized weights for the demographic covariates shows that they all have
 #              min=-2.5, max=5)
 ```
 
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+m6_metrics <- calc_metrics_3("Model6 - NNet", 
+                             neuralModel, test_nn[, -23], train_nn, "nnet", test_nn[, 23])
+
+all_model_metrics <- rbind(all_model_metrics, m6_metrics[[1]])
+
+kable(m6_metrics[[1]])
+
+```
+
+## All Metrics ##
+
 ```{r}
-DataPred <- neuralnet::compute(neuralModel, test_nn[, -1])
-
-#DataPred$net.result
-
-#translate probabilities to predictions --> 
-# KF: Not sure this is the correct to get probability .  Compure returns a
-
-nn_predict <- rep(0,nrow(test_nn))
-nn_predict[DataPred$net.result>.5] <- 1
-#confusion matrix
-table(pred=nn_predict,true=test_nn$target)
-
-fourfoldplot(table(pred=nn_predict,true=test_nn$target))
-#accuracy
-mean(nn_predict==test_nn$target)
+all_model_metrics
 
 ```
 
-##Naive Bayes Classifier  
-
-Since we predicting a categorical response, we will build a naive bayes model although not all the features are categorical.  
-
-```{r Naive Bayes, echo=FALSE, message=FALSE, warning=FALSE}
-#library(e1071)
-library(klaR)
-
-set.seed(728)
-
-nb_fold = trainControl(method='cv',number=10)
-
-
-# From Caret/klaR package
-nb_model_c = train(target ~.,data = train_all, method='nb',trControl=nb_fold)
-
-#Prediction
-nb_predict_train_c = predict(nb_model_c, train_all, type = 'raw')
-#nb_predict_train_e=predict(nb_model_e, newdata=train_all, type="class")
-
-#Confusion matrix to check accuracy - caret package
-cfm_c <- confusionMatrix(nb_predict_train_c, train_all$target, positive = '1', dnn = c("Prediction", "Actual"))
-
-```
-
-The Naive Bayes model performed relatively well, the accuracy on the trainning data set, using 10-folds Cross Validation is only 79%% and the Kappa = 0.168. The model is predicting a higher number of false 
-* On reasaon may be due to we have a very high number of false negative, where the model predicted failed to predict loaon default when in fact there was one. For the business case of a bank trying to identify potential at risk cusotmers, this results is detrimental to the model, even with an accuracy of 79%.  
-
-We will try to refine our model to get better results. 
-
-One reason may due to some corelation between the predictors, Naive Bayes models have an assumption of indepence. 
-Another reason, may due to the low probability of a default occurring.  
-
-We will consider the possible corelation between some of the predictors, we will consider a threshold of 0.75 (in absolute value) and remove any predictors that have correlation equal or superior to threshold.
-
-```{r corralation nb, echo=FALSE, message=FALSE, warning=FALSE}
-train_predictors <- train_all
-train_predictors$target <- NULL
-
-corr_limit <- 0.75
-predcorr = cor(train_predictors)
-highCorrpp <- findCorrelation(predcorr, cutoff = corr_limit, verbose = FALSE)
-train_all_nb <- train_all[, -highCorrpp]
-
-```
-
-We have 3 predictors that have such high corelations; PAY_2, PAY_3, PAY4, we will remove them and re-tain our model.  
-
-```{r Naive Bayes2, echo=FALSE, message=FALSE, warning=FALSE}
-
-# From Caret/klaR package
-nb_model_c2 = train(target ~.,data = train_all_nb, method='nb',trControl=nb_fold)
-
-#Prediction
-nb_predict_train_c2 = predict(nb_model_c2, train_all_nb, type = 'raw')
-#nb_predict_train_e=predict(nb_model_e, newdata=train_all, type="class")
-
-#Confusion matrix to check accuracy - caret package
-cfm_c2 <- confusionMatrix(nb_predict_train_c, train_all_nb$target, positive = '1', dnn = c("Prediction", "Actual"))
-
-```
-
-Dropping these predictors did not improve the model.  
-
-Let us now consider the probability of a default in our current tainning data set.  
-
-```{r Probabilities nb, echo=FALSE, message=FALSE, warning=FALSE}
-
-df <- train_all %>% dplyr::group_by(target) %>% summarise(count=n())
-df$ratio <- round(df$count/nrow(train_all), 4)
-
-knitr::kable(df)
-``` 
-
-The ratio to default to non-default is about 3 to 1, this parsity of the data may be the reason why the naive bayes model does not performed as well as the other.  
 
 #References
 https://datascienceplus.com/fitting-neural-network-in-r/
 https://www.youtube.com/watch?v=LTg-qP9iGFY
 https://www.analyticsvidhya.com/blog/2017/09/creating-visualizing-neural-network-in-r/
 
-
-# https://stats.stackexchange.com/questions/21717/how-to-train-and-validate-a-neural-network-model-in-r
-
-```{r nnet-caret}
-c.fit <- train(as.factor(target) ~ ., data = train_nn,
-         method = "nnet", maxit = 1,   #increase later since this takes times to run 
-         trace = F) 
-    
-    
-nnet.predict <- predict(c.fit, newdata = test_nn[,-23], type='raw')
-#prestige.rmse <- sqrt(mean((prestige.predict - prestige.test$income)^2)
-
-confusionMatrix(nnet.predict, as.factor(test_nn[,23]))    
-
-
-getTrainPerf(c.fit)
-
-```
-
-
-## Metrics 
-
+https://stats.stackexchange.com/questions/21717/how-to-train-and-validate-a-neural-network-model-in-r
 http://blog.revolutionanalytics.com/2016/03/com_class_eval_metrics_r.html
 
-##References
+
 Altabrawee, H. (2016).  Performance Evaluation of Fourteen Machine Learning Algorithms on Credit Card Default Classification.  Education College Journal, 463-473
 
 Butaru, F., Chen, Q., Clark, B., Das, S., Lo, A., & Siddique, A. (2015). Risk and Risk Management in the Credit Card Industry. doi:10.3386/w21305
