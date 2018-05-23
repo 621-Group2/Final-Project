@@ -952,12 +952,22 @@ kable(coef_all, caption='Coefficient comparison between Ridge and Lasso')
 We see that the feature selection of Lasso removed PAY_6, PAY_AMT3, EDU_ADV_DEGREE, AVG_BILL_TO_LIMIT, and PAY_TO_BILL as predictors in the model.
 
 
-## Regression Tree
+## Decision Tree
 
-A basic regression tree was used on this data set to predict default, which partitions the data into smaller groups that are more homogenous with respect to the response. The data were split into training and test sets at a 70:30 ratio.
+A basic decision tree was used on this data set to predict default, and it partitions the data into smaller groups that are more homogeneous with respect to the response. It is a type of supervised learning algorithm that is mostly used in classification problems, however it works for categorical and continuous variables. The data were split into training and test sets at a 70:30 ratio.
+Some basic terminology is as follows:
+  1. Root Node: Represents the entire dataset and gets further divided into two or more homogeneous sets.
+  2. Splitting: The process of dividing a node into two or more sub-nodes.
+  3. Decision Node: The sub-node where a split occurs.
+  4. Leaf/ Terminal Node: A node that does not split is called a Leaf or Terminal node.
+  5. Pruning: The process of removing sub-nodes of a decision node to improve accuracy of a model. Analogous to the opposite of splitting.
+  6. Branch / Sub-Tree: A sub section of entire tree.
+  7. Parent and Child Node: A node that is divided into sub-nodes is called parent node and its sub-nodes themselves are called child nodes.
 
-### grow tree
 
+#### Grow tree
+
+First we grow the tree using the rpart() package and run the model.
 ```{r desicion-tree}
 
 m5 <- rpart(target ~ .,  data = train_all, method = 'class')
@@ -969,55 +979,33 @@ m5
 
 #### Plot and summarize
 
-```{r}
-# additional plots
-par(mfrow=c(1,2)) 
-rsq.rpart(m5)
-```
 
-The relative error is $1-R^2$, similar to linear regression. The xerror is related to the  [PRESS](https://en.wikipedia.org/wiki/PRESS_statistic) statistic. The split from 0 to 1 appears to have the largest improvement of fit. The split from 1 to 2 is much less of an improvement.
-
-The figure to the left shows a visual of the aforementioned first split providing more information than the second split. The figure to the right shows if a tree should be pruned, and in our case it does not. 
+The figure below shows a representation to the cross validated error summary. The cp values are plotted against the geometric mean until a minimum value is reached. It is a method to help determine if a tree should be pruned, and in our case pruning is not necessary since the model chose the minimul amount of leaf nodes necessary to make a decision tree. Had there been more leaf nodes we would choose the lowest  point on the graph and prune all nodes to the right of it.
 ```{r}
 plotcp(m5) # visualize cross-validation results
 
 ```
 
-Looking at the `plotcp` function we can take a look and see if the tree needs pruning, and we can see 3 nodes appears to be the ideal size.
+Looking at the `plotcp` function we can take a look and see if the tree needs pruning, and we can see 2 nodes appears to be the ideal size.
 
 ```{r}
 summary(m5, cp = 0.1) # detailed summary of splits
 #print(m5)
 ```
 
-Turning to the summary, the first split partitions the 20998 observations into groups of 18789 and 2209 (nodes 2 and 3) with mean values of 0.167 and 0.698, respectively. Variables `PAY_0` and `PAY_2` are weighted highest in importance.
+The summary shows the root node splits the 20998 observations into groups of 18789 and 2209 (nodes 2 and 3) with mean values of 0.167 and 0.698, respectively. Variables PAY_0 is weighted by far highest in importance, with PAY_5 and PAY_4 a distant second.
+
 
 ```{r}
-
-# Mike - this plot throws an error "need finite ylim"
-
-
-
-#plot(predict(m1), resid(m1))
-#temp <- m1$frame[m1$frame$var == '<leaf>',]
-#axis(3, at = temp$yval, as.character(row.names(temp)))
-#mtext('leaf number', side = 3, line = 3)
-#abline(h = 0, lty = 2)
+rpart.plot(m5, type=3, digits=3, fallen.leaves=TRUE, main='Decision Tree for Credit Card Defaults')
 
 ```
 
-A residual plot of predicted values vs. residuals shows 
-
-```{r}
-rpart.plot(m5, type=3, digits=3, fallen.leaves=TRUE, main='Regression Tree for Credit Card Defaults')
-
-```
-
-Lastly in the plotting section is a visual of the regression tree. The model tells us that if $PAY_-0\geq 1.5$, there is a 69.8% chance the customer will default. Approx 10.5% of the data set falls under this threshold. On the other hand if $PAY_-0< 1.5$, the model takes a look at the customers $`PAY_-2$ scores. If $PAY_-2\geq1.5$ there is a 41.6% chance the customer will default, which comprises of 7.5% of the dataset. Lastly if $PAY_-2<1.5$ there is only a 14.5% chacne of default, which 81.9% of the data set falls under.
+Lastly in the plotting section is a visual of the regression tree. The model tells us that if PAY_0 >=1.5, there is a 69.8% chance the customer will default. Approx 10.5% of the data set falls under this threshold. On the other hand if PAY_0 < 1.5, there is a 16.7% likelihood the customer will default, which 89.5% of the data set falls under.
 
 
 ###Predict
-We run prediction on the test data, find the mean absolute error from original data set to predictions and obtain an $MSE$ of 0.139.
+We run prediction on the test data, find the mean absolute error from original data set to predictions and obtain a balanced accuracy of 76.4%. More details for the model can be found in the Model Results section.
 ```{r}
 
 
@@ -1139,13 +1127,16 @@ write.csv(perf_metrics2, 'model_perf_metrics2.csv', row.names = F)
 
 
 #References
+https://www.analyticsvidhya.com/blog/2016/04/complete-tutorial-tree-based-modeling-scratch-in-python/
+https://www.statmethods.net/advstats/cart.html
+https://www.r-bloggers.com/a-brief-tour-of-the-trees-and-forests/
+
 https://datascienceplus.com/fitting-neural-network-in-r/
 https://www.youtube.com/watch?v=LTg-qP9iGFY
 https://www.analyticsvidhya.com/blog/2017/09/creating-visualizing-neural-network-in-r/
 
 https://stats.stackexchange.com/questions/21717/how-to-train-and-validate-a-neural-network-model-in-r
 http://blog.revolutionanalytics.com/2016/03/com_class_eval_metrics_r.html
-
 
 Altabrawee, H. (2016).  Performance Evaluation of Fourteen Machine Learning Algorithms on Credit Card Default Classification.  Education College Journal, 463-473
 
