@@ -1,0 +1,1181 @@
+---
+title: "621-Final Project"
+author: "Brian Kreis"
+date: "May 1, 2018"
+output:
+  html_document:
+    df_print: paged
+  word_document: default
+---
+
+
+```{r libraries, echo=FALSE, message=FALSE, warning=FALSE}
+library(psych)
+library(GGally)
+library(ggplot2)
+library(ggthemes)
+library(reshape2)
+#library(VIM)
+# library(mice)
+# library(stringr)
+library(dplyr)
+library(car)
+library(usdm)
+library(tidyverse)
+library(stringr)
+library(DataExplorer)
+library(knitr)
+# library(corrplot)
+library(MASS)
+library(Metrics)
+# library(tinytex)
+# library(ggfortify)
+library(caret)
+library(pscl)
+library(MKmisc)
+library(Metrics)
+library(pROC)
+library(rpart)
+library(rpart.plot)
+library(glmnet)
+library(neuralnet)
+
+# library(gvlma)  ## only used for confirming model assumptions
+
+options(scipen=999)
+
+```
+
+
+
+```{r Read data, echo=FALSE, message=FALSE, warning=FALSE}
+
+cc_data <- read.csv("https://raw.githubusercontent.com/621-Group2/Final-Project/master/UCI_Credit_Card.csv", header=TRUE, sep=",")
+
+#Remove the id from the dataset
+cc_data$ID <- NULL
+
+#Simplify name of response
+colnames(cc_data)[24] <- "DEFAULT" 
+
+```
+
+```{r user_functions, echo=FALSE, message=FALSE, warning=FALSE}
+
+as.numeric.factor <- function(x) {as.numeric(levels(x))[x]}
+
+# get_outliers function
+get_outliers <-  function(x, n = 10) {
+  
+  bp <- boxplot.stats(x)
+  
+  obs_hi <- unique(x[which(x > bp$stats[5])])
+
+  if (length(obs_hi) < n) { n <- length(obs_hi) }
+
+  hi <- sort(obs_hi, decreasing = T)[1:n]
+  
+  obs_low <- unique(x[which(x < bp$stats[1])])
+
+  if (length(obs_low) < n) { n <- length(obs_low) }
+
+  low <- sort(obs_low, decreasing = T)[1:n]
+
+  return (list(Hi=hi, Low=low))
+  
+}  
+
+#Keith's function
+all_model_metrics <- data.frame()
+all_roc_curves <- list()
+all_predictions <- list()
+all_cm <- list()
+
+calc_metrics <- function(model_name, 
+                         model, 
+                         test, 
+                         train) {
+  
+  pred_model <- predict(model, test, type = 'response')
+  y_pred_model <- factor(ifelse(pred_model > 0.5, 1, 0), levels=c(0, 1))
+
+  compare <- cbind (actual=as.numeric.factor(test$target), 
+                    predicted=as.numeric.factor(y_pred_model))  # combine
+  
+  # Confusion Matrix
+  cm <- confusionMatrix(test$target, y_pred_model, positive = "1", mode="everything" ) 
+  
+  accuracy <- cm$overall[[1]]
+  kappa_value <- cm$overall[[2]]
+  youden_value <- cm$byClass[[1]] - (1 - cm$byClass[[2]])
+  F1Score_value <- cm$byClass[[7]]
+  FP_value <- (cm$table[2,1]/nrow(test))*100
+  
+  #AUC
+  #AUC_value <- auc(as.numeric(test$target), pred_model)
+  
+  cm_df <- data.frame(Model=model_name, 
+                      Accuracy=round(accuracy, 3),
+                      AIC=round(AIC(model), 3), 
+                      BIC=round(BIC(model), 3), 
+                      MAE=Metrics::mae(compare[, 1], compare[, 2]),
+                      MAPE=Metrics::mape(compare[, 1], compare[, 2]),     #MAPE calculates the mean absolute percentage error:
+                      MSE=Metrics::mse(compare[, 1], compare[, 2]),       #MSE calculates mean squared error
+                      RMSE=Metrics::rmse(compare[, 1], compare[, 2]),
+                      Kappa = round(kappa_value, 3), 
+                      Youden = round(youden_value, 3), 
+                      F1Score = round(F1Score_value, 3),
+                      FPPrct = round(FP_value, 2),
+                      Sensitivity=round(cm$byClass["Sensitivity"], 3),
+                      Specificity=round(cm$byClass["Specificity"], 3),
+                      PosPredValue=round(cm$byClass["Pos Pred Value"], 3),
+                      NegPredValue=round(cm$byClass["Neg Pred Value"], 3),
+                      Precision=round(cm$byClass["Precision"], 3),
+                      Recall=round(cm$byClass["Recall"], 3),
+                      BalancedAccuracy=round(cm$byClass["Balanced Accuracy"], 3)
+                      )
+  
+  #cbind(t(cm$overall),t(cm$byClass)))
+  
+  # ROC Curves 
+  roc_model <- roc(target ~ pred_model, data = test)
+  
+  # Result
+  result <- list(cm_df, roc_model, compare, cm)
+
+  return (result)
+  
+}
+
+## this for used for the ridge and lasso regression models
+calc_metrics_2 <- function(model_name, 
+                           model, 
+                           test, 
+                           train, 
+                           s,
+                           y_test) {
+  
+    
+  pred_model <- predict(model, newx = test, s=s, type="response")
+  y_pred_model <- as.factor(ifelse(pred_model > 0.5, 1, 0))
+     
+  compare <- cbind (actual=as.numeric.factor(y_test), 
+                    predicted=as.numeric.factor(y_pred_model))  # combine
+  
+  # Confusion Matrix
+  cm <- confusionMatrix(as.factor(y_test), y_pred_model, positive = "1", mode="everything" ) 
+  
+  accuracy <- cm$overall[[1]]
+  kappa_value <- cm$overall[[2]]
+  youden_value <- cm$byClass[[1]] - (1 - cm$byClass[[2]])
+  F1Score_value <- cm$byClass[[7]]
+  FP_value <- (cm$table[2,1]/nrow(test))*100
+  
+  #AUC
+  #AUC_value <- auc(as.numeric(test$target), pred_model)
+  
+  cm_df <- data.frame(Model=model_name, 
+                      Accuracy=round(accuracy, 3),
+                      AIC=NA, 
+                      BIC=NA, 
+                      MAE=Metrics::mae(compare[, 1], compare[, 2]),
+                      MAPE=Metrics::mape(compare[, 1], compare[, 2]),     #MAPE calculates the mean absolute percentage error:
+                      MSE=Metrics::mse(compare[, 1], compare[, 2]),       #MSE calculates mean squared error
+                      RMSE=Metrics::rmse(compare[, 1], compare[, 2]),
+                      Kappa = round(kappa_value, 3), 
+                      Youden = round(youden_value, 3), 
+                      F1Score = round(F1Score_value, 3),
+                      FPPrct = round(FP_value, 2),
+                      Sensitivity=round(cm$byClass["Sensitivity"], 3),
+                      Specificity=round(cm$byClass["Specificity"], 3),
+                      PosPredValue=round(cm$byClass["Pos Pred Value"], 3),
+                      NegPredValue=round(cm$byClass["Neg Pred Value"], 3),
+                      Precision=round(cm$byClass["Precision"], 3),
+                      Recall=round(cm$byClass["Recall"], 3),
+                      BalancedAccuracy=round(cm$byClass["Balanced Accuracy"], 3)
+                      )
+  
+  #cbind(t(cm$overall),t(cm$byClass)))
+  
+  # ROC Curves 
+  roc_model <- roc(as.numeric(y_test) ~ as.numeric(pred_model), data = as.data.frame(test))
+  
+  # Result
+  result <- list(cm_df, roc_model, compare, cm)
+
+  return (result)
+  
+}
+
+## used for neuralnet and decision tree
+calc_metrics_3 <- function(model_name, 
+                           model, 
+                           test, 
+                           train,
+                           type=NULL,
+                           y_test=NULL) {
+  
+  if (type=="nnet") {
+    pred_model <- neuralnet::compute(model, test[, -23])$net.result
+    y_pred_model      <- as.factor( ifelse(pred_model > 0.5, 1, 0) )
+    target <- y_test
+  }
+  else { 
+    
+    pred_model <- predict(model, test, type = "prob")[,"1"]
+    y_pred_model      <- as.factor(ifelse(pred_model > 0.5, 1, 0))
+    target <- test$target
+  }
+  
+  
+  compare <- cbind (actual=as.numeric.factor(target), 
+                    predicted=as.numeric.factor(y_pred_model))  # combine
+  
+  # Confusion Matrix
+  cm <- confusionMatrix(as.factor(target), y_pred_model, positive = "1", mode="everything" ) 
+  
+  accuracy <- cm$overall[[1]]
+  kappa_value <- cm$overall[[2]]
+  youden_value <- cm$byClass[[1]] - (1 - cm$byClass[[2]])
+  F1Score_value <- cm$byClass[[7]]
+  FP_value <- (cm$table[2,1]/nrow(test))*100
+  
+  #AUC
+  #AUC_value <- auc(as.numeric(test$target), pred_model)
+  
+  cm_df <- data.frame(Model=model_name, 
+                      Accuracy=round(accuracy, 3),
+                      AIC=NA, 
+                      BIC=NA, 
+                      MAE=Metrics::mae(compare[, 1], compare[, 2]),
+                      MAPE=Metrics::mape(compare[, 1], compare[, 2]),     #MAPE calculates the mean absolute percentage error:
+                      MSE=Metrics::mse(compare[, 1], compare[, 2]),       #MSE calculates mean squared error
+                      RMSE=Metrics::rmse(compare[, 1], compare[, 2]),
+                      Kappa = round(kappa_value, 3), 
+                      Youden = round(youden_value, 3), 
+                      F1Score = round(F1Score_value, 3),
+                      FPPrct = round(FP_value, 2),
+                      Sensitivity=round(cm$byClass["Sensitivity"], 3),
+                      Specificity=round(cm$byClass["Specificity"], 3),
+                      PosPredValue=round(cm$byClass["Pos Pred Value"], 3),
+                      NegPredValue=round(cm$byClass["Neg Pred Value"], 3),
+                      Precision=round(cm$byClass["Precision"], 3),
+                      Recall=round(cm$byClass["Recall"], 3),
+                      BalancedAccuracy=round(cm$byClass["Balanced Accuracy"], 3)
+                      )
+  
+  #cbind(t(cm$overall),t(cm$byClass)))
+  
+  # ROC Curves 
+  roc_model <- roc(as.numeric(target) ~ as.numeric(pred_model), data = as.data.frame(test))
+  
+  # Result
+  result <- list(cm_df, roc_model, compare, cm)
+
+  return (result)
+  
+}
+
+plot_varImp <- function(model) {
+  
+  x <- data.frame(varImp(model))
+
+  x$Variable <- rownames(x)
+
+  x %>% ggplot(aes(x=reorder(Variable, Overall), y=Overall, fill=Overall)) +
+            geom_bar(stat="identity") + coord_flip() + guides(fill=FALSE) +
+            xlab("Variable") + ylab("Importance") + 
+            ggtitle("Variable Importance") 
+  
+  
+}
+
+
+```
+
+
+##Team Members
+
+- Valerie Briot
+- Michael D'acampora
+- Keith Folsom
+- Brian Kreis
+- Sharon Morris
+
+
+
+#Abstract
+Financial instititutions seek to minimize risk by identifying credit card holders who are likely to default on a payment. This research endeavors to apply and explore multiple classification techniques against the UCI credit card default dataset to determine which model provides the most predictive accuracy in identifying defaulters.  We evaluate the following classifiers -- binary logistic regression, ridge and Lasso logistic regression, decision tree, Naive Bayes, and neural net.  The classifier with the best predictive power as determined by accuracy, mse, rmse, F1, and kappa (TBD) will then be used with subsampling techniques to potentially further improve accuracy occuring from imbalance that may be present in the response variable.
+
+
+#Keywords
+classifction, UCI credit card dataset, binary logistic, ridge regression, LASSO, Naive Bayes, neural net, class imbalance
+
+#Introduction
+Our project team has obtained a data set containing 30,000 observations with each observation representing a credit card customer. Variables included in the data set provide information on that customer's payment history, outstanding balances as well as demographic information. It is our task to develop a set of classification models to predict the probability that a customer will be in default of their next scheduled payment. The UCI credit card data set contains our default payment response variable, which is binary (0,1), an ID field, and 23 predictor variables. We will break the data set into a training and test set for our evaluation. 
+
+The objective is to build multiple classifiction models on the training data to predict the probability that a person will be in default of payment. We will then run analyses to determine which model performed best and apply subsampling techniques to attempt to further improve the model's accuracy. 
+
+This model may be useful for financial institutions who provide revolving credit facilities to determine which customers may need intervention, including where reduction in the size of the outstanding credit facility would be prudent. 
+
+The paper is organized into the following sections:  
+
+* __Literature Review__ reviews similar research published on the topic of financial risk management using data mining and classification to identify credit card default and the related field of fraud detection    
+* __Methodology__ describes the approach and techniques used in this research  
+* __Experimentation and Results__ provides an exploratory overview of the dataset and details the results of the models  
+* __Discussion and Conclusions__ concludes research and identifies further areas of work  
+
+
+
+# Literature review
+Credit card default prediction is described as an application of classification techniques within data mining.  Financial and lending institutions employ probability of default (PD) models to calculate expected loss associated with default, and more generally identify individuals who are more likely to default on a payment.   Similarly, fraud detection is another component within risk management employed to mitigate loss.  Prediction of both credit card default and fraud see the application of similar binary classification algorithms.   Due to the similarity between the two applications of classification, research dealing with both will be explored to more fully understand the current state and emerging state-of-the-art techniques. Also, the techniques highlighted address the challenges created by class imbalance in the outcome variable where the majority of cases (non-default or legitimate transactions) can significantly outnumber minority cases.   
+
+Universal to all literature in this area is the cited challenge with the lack of real-world data.  Most available data is simulated or anonymized due to legal restrictions.  Consequently, research development and the pool of available literature are somewhat limited or constrained by the limitations of the datasets.  However, a key point is that the ability to apply accurate models within these risk management contexts can represent a huge potential savings for financial institutions.
+
+Pasha, Fatima, Dogar, & Shahzad (2017) in their research explore the predictive accuracy of six algorithms for default prediction - linear discriminant analysis, Naïve Bayes, C4.5 decision tree, Logistic Regression, Neural Networks -MLP, and k-Nearest Neighbor (KNN).  Their work evaluates performance using metrics such as accuracy (correct classification, incorrect classification, precision, and recall.  The results show that the relatively newer algorithm of Multilayer Perceptron within the class of neural networks proves to be the best algorithm with an accuracy rate of 81.7%.  It is worth noting that logistic regression is a close second in performance at 81%.
+The use of MLP and KNN algorithms are the focus of Koklu and Sabanci's research (Koklu & Sabanci, 2016) on estimation of credit card customer's payment status using classification within data mining techniques.  Specifically their research uses Multilayer Perceptron (MLP) and k-Nearest Neighbor (KNN) algorithms using the open-source WEKA data mining platform.  The performance of these algorithms is evaluated in the context of accuracy, MAE (Mean Absolute Error), and RMSE (Root Mean Squared Error).   Similarly results were found where the MLP algorithm outperformed the KNN.
+
+Altabrawee (2016) examines fourteen classification models and their predictive accuracy in default prediction.  He notes the importance of a successful model's ability to avoid underfitting or overfitting training data.   In particular, the appropriate amount of regularization in the model should be used to limit under or overfitting.   Performance results are evaluated in terms of average accuracy, precision, recall, and F score.  The partial decision tree algorithm PART is determined to be the most accurate while Naïve Bayes-related algorithms are at the bottom in performance.
+
+Butaru et al. (2015) research the application of machine learning techniques to the problem of credit risk.  Their focus is on decision tree, random forest, and logistic regression models.  Logistic regression models are noted to be the more traditionally used models for assessing credit risk.  Regularization is used in their logistic regression model in order to be more in line with the anticipated performance of the decision trees and random forest models.    Performance is evaluated using precision, recall, F score, and the kappa statistic.  Their research determines that, although all three models performed well, decision trees and random forest outperform logistic regression especially within short time horizons.   
+
+Within the broader context of risk modeling and applications of classification techniques, Lusis (2017) compare machine learning techniques for credit card fraud detection, analyzes fraud detection classification approaches using Logistic Regression (LR) and Random Forest (RF) algorithms.  Their findings are compared to results from previous research conducted using SVM or Support Vector Machine algorithms.  Citing the challenge of lacking real word data, Lusis' analysis is constrained to simulated data for legal reasons.  Both the LR and RF models are tested using PCA (Principal Component Analysis) and without PCA, which is a technique used to reduce the dimensionality of data.   Of these models, Random Forest without PCA and K=3 had the best predictive performance as determined by accuracy, sensitivity, and specificity.   They observe that applying a Preprocessing step helped the performance of the LR models whereas Preprocessing was not necessary for the Random Forest model.
+
+Seeja et al. (2014) propose a novel approach to handling the class imbalance problem by using a frequent itemset mining approach based on an Apriori algorithm.  The authors, also citing challenges with real world dataset availability, compare their itemset mining approach to SVM, K-nearest neighbor (KNN), Naiive Bayes (NB), and Random Forest algorithms.
+Evaluation of each model's performance is done using Matthews correlation coefficient and BCR (and Balanced classification rate).  Seeja et al. (2014) itemset approach outperformed all other test models as measured by sensitivity, false alarm rate, balanced classification rate, and Mathews correlation coefficient.  It worth noting that the authors attempted to use SMOTE to address the class imbalance within the data and ultimately saw this lead to performance degradation so it was abandoned.
+Padmaja et al. (2007) approach fraud detection as an unbalanced classification problem and research addressing class imbalance by using hybrid sampling techniques.  They approach their research applying a "combination of random under-sampling and over-sampling using SMOTE."  SMOTE: Synthetic Minority Over-sampling Technique.  Classifiers used are k-NN, Radial Basis Function networks, C4.5 and Naive Bayes.
+
+Zareapoor and Shamsolmoali (2015) in their research also note that the lack of real world data for researchers has limited the amount of published literature available on the topic.  They approach their research using five classification techniques - (1) SVM, Naive Bayes (NB), KNN, and Bagging ensemble.  Their premise is that ensemble learning techniques are superior to the other techniques tested. To assess model performance, Zareapooret et al. (2015) also use the metrics of Fraud Catching Rate, False Alarm Rate, Balanced Classification Rate, and Matthews correlation coefficient.  They discount using accuracy and error rate, citing these as biased metrics.  Their analysis shows that a bagged ensemble classifier using decision trees outperforms KNN, NB, and SVM.
+
+Sahin and Duman (2011) focus on Neural Networks and Logistic Regression (binomial and multinomial) classification models.  They too raise the challenge created by class imbalance and recommend the use of under and oversampling techniques.  Specifically, Sahin and Duman (2011) employ a stratified sampling "to under sample the normal records so that the models have chance to learn the characteristics of both the normal and the fraudulent records' profile" (p. 5).  Their research shows a clear performance advantage of Neural Net models over LR models and cites the overfitting behavior of logistic regression.  Among the logistic regression models, stepwise MLR is the champion in both accuracy performance and catching fraudulent transactions except the last case.
+
+The review above of available research shows many relevant models, techniques, and insights useful for our own research.  While regression modeling is our main focus, we feel it important to consider techniques beyond logistic regression to more fully understand strengths and limitations of traditional techniques within the context of emerging state-of-the-art techniques.  Clearly seen in the research though is that higher predictive accuracy is being driven through the use of ensemble machine learning techniques.  While important to understand, ensemble techniques are outside the scope of this research.
+
+
+
+
+
+# Methodology
+
+_Discuss the key aspects of your problem, data set and regression
+model(s). Given that you are working on real-world data, explain at a high-level your
+exploratory data analysis, how you prepared the data for regression modeling, your
+process for building regression models, and your model selection_
+
+This research will explore several classification techniques against the UCI credit card default dataset to determine which model provides the most predictive accuracy in identifying pyament default.  Our work includes analyses using logistic regression models as this has traditionally been a common technique applied to default detection.  However, we also apply more current approaches to better understand logistic regression within the context of emerging state-of-the-art machine learning classifiers.
+
+
+#### Dataset Description 
+
+The UCI default credit card clients dataset consists of monthtly payment data of credit cardholders of an undisclosed bank in Taiwan starting in September of 2005 and ending in April 2005.  The data contains one binary response variable which indicates whether a payment default will occur in the next month.  There are 23 explanatory variables included in the dataset.  The dataset contains 30,000 total observations, of which 6,636 observations (28%) are for cardholders with a payment default indicator.
+
+```{r data exploration, echo=FALSE, message=FALSE, warning=FALSE}
+
+Variable <- colnames(cc_data)
+
+Definition <- c("Amount of given credit in NT dollars", "Gender (1=male, 2=female)", "(1=graduate school, 2=university, 3=high school, 4=others, 5=unknown, 6=unknown)", "Marital status (1=married, 2=single, 3=others)", "Age in Years", "Repayment status in September, 2005", "Repayment status in August, 2005", "Repayment status in July, 2005", "Repayment status in June, 2005", "Repayment status in May, 2005", "Repayment status in April, 2005", "Amount of bill statement in September, 2005", "Amount of bill statement in August, 2005", "Amount of bill statement in July, 2005", "Amount of bill statement in June, 2005", "Amount of bill statement in May, 2005", "Amount of bill statement in April, 2005", " Amount of previous payment in September, 2005", " Amount of previous payment in August, 2005", " Amount of previous payment in July, 2005", " Amount of previous payment in June, 2005", " Amount of previous payment in May, 2005", " Amount of previous payment in April, 2005", "Default payment (1=yes, 0=no)")
+
+card_sum <- cbind.data.frame (Variable, Definition)
+
+card_sum$Type <- "Predictor"
+card_sum[24,3] <- "Response"
+
+
+knitr::kable(card_sum, caption="Table 1. Credit Card Default Dataset")
+```
+
+Exploratory data analysis is performed on the dataset using of descriptive analysis, correlation analysis, visualization, and Principle Component Analysis.  The EDA phase is important in understanding the characteristics of the data for model building.  Characteristics such as zero/missing values, skew, outliers, and potential data issues all inform the subsequent variable recoding and tranformation applied to the data.  Correlation and Principal Component Analysis (PCA) are used to identify existing collinearity among the predictor variables, notably the BILL_AMT variables.  This is further confirmed through variance inflation factor (VIF) analysis.
+
+The collinearity among the BILL_AMT predictor variables is not surprising as one would not expect the bills to change significantly from month to month for an individual in general. We therefore create additional variables in attempt to account for the variation that these variables represent and remove the original BILL_AMT variables. The following variables are created:
+
+- AVG_BILL: The average bill over over the six month period for each customer
+- AVG_BILL_TO_LIMIT: The AVG_BILL variable divided by that individual customer's credit limit
+- PAY_TO_BILL: Average Payment made over the 6 months divided by the AVG_BILL
+- INC_COUNT: It may also be worthwile to see for how many months the customer's bill increased from one month to the next. This shows how often a customer is spending more than they payoff each month. If this occurs for five consecutive months it may indicate a worsening financial condition.
+
+
+#### Models Explored
+
+1.  Binary Logistic Regression
+2.  Logistic Regression using Ridge and Lasso Regularization
+3.  Decision Trees
+4.  Naive Bayes 
+5.  Neural Net
+
+We implement model fitting and testing using a 70% split of the transformed credit card default dataset.  Both the training and test datasets are created through random sampling.  The training dataset is used to fit all models evaluated in this research and, similarly, the test dataset is used to determine predictive performance of the same models based on an hold-out dataset.
+
+
+#### Performance Measurement
+
+A critical feature of the credit card default prediction models being evaluated is their ability accurately predict whether a cardholder will default on next month's payment.  As such, accuracy will be a measure used to determine a model's performance. However, accuracy alone does not provide a full picture for model assessment so the following performance measures will be used:
+
+__F1-score__
+The harmonic mean of the precision and recall
+
+__Kappa statistic__
+Kappa takes into account the accuracy that would be generated purely by chance. 
+Kappa takes on values from -1 to +1, with a value of 0 meaning there is no agreement between the
+actual and classified classes. A value of 1 indicates perfect concordance of the model prediction
+and the actual classes and a value of 0 indicates total disagreement between prediction and the
+actual. The following scale can be used to evaluate Kappa value;
+??? 0-0.20 as slight,
+??? 0.21-0.40 as fair,
+??? 0.41-0.60 as moderate,
+??? 0.61-0.80 as substantial, and
+??? 0.81-1 as almost perfect
+
+__Sensitivity__
+Sometimes called the true positive rate, sensitivity is rate of that the event of interest, in this case default, is correctly predicted within the sample (Kuhn et al. 2013)
+
+__Specificity__
+As the converse of sensitivity, specificity is true negative rate and is the rate at which the nonevent is correctly identified as the nonevent within the sample (Kuhn et al. 2013)
+
+__Balanced Accuracy__
+Defined as (Sensitivy + Specificity)/2, balanced accuracy provides a potentially more accurate metric of accuracy in binary classification models with potentially imbalanced class distributions.
+
+__Fale-Positive Rate__
+Someimtes called the false alarm rate, false-positive rate is defined as 1 - Specificity.
+
+__Youden's Index___
+Youden's index evaluates the ability of a classifier to avoid misclassifications. This index puts
+equal weights on a classifier's performance on both the positive and negative cases.
+
+Model selection is peformed using the performance metrics noted above as the selection criteria.  Each model's performance will be assessed using the same test dataset.   
+
+# Experimentation and Results
+
+
+
+## Exploratory Analysis 
+
+###Missing and Zero Values
+
+The data does not contain missing values and as such no imputation will be necessary.
+
+
+```{r miss_plot, echo=FALSE, message=FALSE, warning=FALSE, eval = FALSE}
+
+plot_missing(cc_data, title="Credit Card Data - Missing Values (%)")
+
+```
+
+
+### Descriptive Statistics
+
+Descriptive statistics was performed for all predictor and response variables to explore the data. 
+
+```{r descriptive statistics, echo=FALSE, message=FALSE, warning=FALSE, eval = FALSE }
+
+#Use Describe Package to calculate Descriptive Statistic
+(CC_des <- describe(cc_data, na.rm=TRUE, interp=FALSE, skew=TRUE, ranges=TRUE, trim=.1, type=3, check=TRUE, fast=FALSE, quant=c(.1,.25,.75,.90), IQR=TRUE))
+
+
+```
+
+
+
+
+
+###Analysis of Variables
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+#Temporary dataset turned to factors for visualization
+cc_dataT <- cc_data
+vars3 <- c("SEX", "MARRIAGE", "EDUCATION", "DEFAULT")
+
+cc_dataT[vars3] <- lapply(cc_dataT[vars3], factor)
+
+#Check ordering 
+table(cc_dataT$PAY_0)
+```
+
+###LIMIT_BAL
+The majority of customers have lower credit limits, as such the distribution is right skewed
+
+```{r bal, echo=FALSE, message=FALSE, warning=FALSE}
+par(mfrow=(c(1,2)))
+ggplot(cc_dataT, aes(x = LIMIT_BAL, fill = DEFAULT)) +
+  geom_histogram() +
+  labs(x = 'Credit Limit') +
+  theme_gdocs()
+```
+
+```{r bal2, echo=FALSE, message=FALSE, warning=FALSE, eval=F}
+ggplot(cc_dataT, aes(x=LIMIT_BAL, y=LIMIT_BAL)) + 
+  geom_boxplot()+
+  theme_pander()
+```
+
+
+###SEX
+The majority of customers are female. This variable can be made into a dummy variable. 
+
+```{r sex, echo=FALSE, message=FALSE, warning=FALSE, eval=F}
+ggplot(cc_dataT, aes(x = SEX, fill = DEFAULT)) +
+  geom_bar() +
+  labs(x = 'SEX') +
+  theme_pander()
+
+```
+
+
+
+
+###EDUCATION
+The majority of customers went to university, there are very few in the other/unknown categories as well as an unknown 0 value and we will consider combining these values into dummy variables of College and Advanced Degree, with a 0 value in the College variable representing High School and all other possibilities.  
+
+```{r edu, echo=FALSE, message=FALSE, warning=FALSE, eval=F}
+ggplot(cc_dataT, aes(x = EDUCATION, fill = DEFAULT)) +
+  geom_bar() +
+  labs(x = 'EDUCATION') +
+  theme_pander()
+
+```
+
+
+###MARRIAGE
+The majority of customers are single and the proportion of default payments appears to be higher for married individual. It appears that there are 0 values here which were not planned. It may be prudent to instead code this as a binary married variable.
+```{r marriage, echo=FALSE, message=FALSE, warning=FALSE, eval=F}
+ggplot(cc_dataT, aes(x = MARRIAGE, fill = DEFAULT)) +
+  geom_bar() +
+  labs(x = 'MARRIAGE') +
+  theme_pander()
+```
+
+###AGE
+The distribution is right skewed. We can see that extremely young customers seem to have a higher proportion of defaults.
+```{r age, echo=FALSE, message=FALSE, warning=FALSE}
+par(mfrow=(c(1,2)))
+ggplot(cc_dataT, aes(x = AGE, fill = DEFAULT)) +
+  geom_histogram() +
+  labs(x = 'AGE') +
+  theme_pander()
+```
+
+```{r age2, echo=FALSE, message=FALSE, warning=FALSE, eval=F}
+ggplot(cc_dataT, aes(x=AGE, y=AGE)) + 
+  geom_boxplot()+
+  theme_pander()
+```
+
+###Repayment Status
+The vast majority of clients are on time or ahead of payments. The number of extremely late payments in the latter months are more infrequent. We can presume that this list only contains customers who's accounts have not yet been charged off, for which we would expect no future payments. Customers with extrmely late repayment statuses 6 months ago have lively already been charged off. 
+
+One issue appears to exist. Moving from PAY_4 (July) to PAY_3 (JUNE) the number of late payments increases. THis should be a gradual movement of clients from one period to the next, so the sudden appearance of frequencies at 6 months late and over does not seem logical. 
+
+```{r repay, echo=FALSE, message=FALSE, warning=FALSE}
+
+par(mfrow=(c(1,1)))
+ggplot(stack(cc_dataT[,6:11]), aes(values, fill=ind))+
+  facet_wrap(~ind, scales = "free") + 
+  geom_bar() +
+  theme_pander()+
+  theme(legend.position="none")
+
+
+```
+
+###Bill Amount
+We appear to have some negative values for bill amount. This likely represents overpayment by the customer and is not problematic. The distributions are similar.
+
+```{r bill, echo=FALSE, message=FALSE, warning=FALSE}
+
+par(mfrow=(c(1,2)))
+ggplot(stack(cc_dataT[,12:17]), aes(values, fill=ind))+
+  facet_wrap(~ind, scales = "free") + 
+  geom_histogram() +
+  theme_pander() +
+  theme(legend.position="none")
+
+ggplot(stack(cc_dataT[,12:17]), aes(x = ind, y = values, fill=ind))+
+  facet_wrap(~ind, scales = "free") + 
+  geom_boxplot() +
+  theme_pander() +
+  theme(legend.position="none")
+```
+
+###Pay Amount
+The majority of payments are small with some rather large outliers. 
+
+```{r pay, echo=FALSE, message=FALSE, warning=FALSE}
+
+par(mfrow=(c(1,2)))
+ggplot(stack(cc_dataT[,18:23]), aes(values, fill=ind))+
+  facet_wrap(~ind, scales = "free") + 
+  geom_histogram() +
+  theme_pander() +
+  theme(legend.position="none")
+
+ggplot(stack(cc_dataT[,18:23]), aes(x = ind, y = values, fill=ind))+
+  facet_wrap(~ind, scales = "free") + 
+  geom_boxplot() +
+  theme_pander() +
+  theme(legend.position="none")
+```
+
+
+###DEFAULT
+As we would expect the majority of customers are not in defualt of their next payment. 
+```{r default, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(cc_dataT, aes(x = DEFAULT)) +
+  geom_bar(fill="blue") +
+  labs(x = 'DEFAULT') +
+  theme_pander()
+
+```
+
+
+###Data Manipulation
+As discussed previously, we will combine values 4, 5 and 6 in education to create an all encompassing other category. We will also change the unknown value of 0 in MARRIAGE to 3(other) 
+
+
+###Recode Predictors
+
+```{r recode, echo=FALSE, message=FALSE, warning=FALSE}
+cc_data$MARRIED <- ifelse(cc_data$MARRIAGE==1, 1, 0)
+
+cc_data$MALE <- ifelse(cc_data$SEX==1, 1, 0)
+
+cc_data$EDU_COLLEGE <- ifelse(cc_data$EDUCATION %in% c(1, 2), 1, 0)
+cc_data$EDU_ADV_DEGREE <- ifelse(cc_data$EDUCATION == 1, 1, 0) 
+
+cc_dataR <- dplyr::select(cc_data, -EDUCATION, -MARRIAGE, -SEX)
+```
+
+
+###Change values to factors
+
+```{r factorize, echo=FALSE, message=FALSE, warning=FALSE}
+
+# #Check for data type
+sapply(cc_dataR,class)
+# 
+# #convert categorical to factor variables so that R can create dummy variables
+# #ordered
+# # vars1 <- c("EDUCATION", "PAY_0", "PAY_2", "PAY_3", "PAY_4", "PAY_5", "PAY_6")
+# # cc_data[vars1] <- lapply(cc_data[vars1], ordered)
+# 
+# #unordered
+# vars2 <- c("MALE", "MARRIED","EDU_ADV_DEGREE", "EDU_COLLEGE","DEFAULT")
+# cc_dataR[vars2] <- lapply(cc_dataR[vars2], factor)
+
+
+
+```
+
+###Correlation Analysis
+As shown below there is high collinearity among variables where we would expect it to occur. For instance in Bill Amount, for which we have six variables all corresponding to different months, we would expect a relation between the amount someone owes one month and the amount that they owe the next. This is also true of the Payment Amount variable, for which we also have 6 sequential months of data for.
+
+Also as we would expect, the DEFAULT variable is most strongly correlated with the payment status. If a person were to default in one payment period, intuitively we would think that may have a relationship with other periods. 
+
+The tables below represent correlation between response and predictor variables.
+
+```{r correlation, echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10}
+ggcorr(cc_dataR, method = "pairwise", label=TRUE, nbreaks=6)
+
+
+```
+
+
+
+
+###Diagnostic Model
+
+This is a daignostic model on all of the data. This model performed quite poorly as we would expect with this many correlated variables.
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10}
+#all base variables
+model1 <- glm(DEFAULT ~ .,
+             data=cc_dataR,
+             family = binomial(link="logit"))
+
+
+#summary(model1)
+car::vif(model1)
+```
+
+
+###PCA component analysis
+
+As mentioned earlier we have quite a bit of collinearity among predictors, as demonstrated by the screeplot below; the variability accounted for by each component drops sharpely within the first few components. 
+
+```{r pca, echo=FALSE, message=FALSE, warning=FALSE}
+pca_val <- princomp(subset(cc_dataR, select = -DEFAULT))
+
+screeplot(pca_val, type = "lines")
+```
+  
+  
+  
+We have very high VIF values for all of the BILL_AMT variables. This is not all that surprising as we would not expect the bills to change significantly from month to month for an individual in general. We can create additional variables in attempt to account for the variation that these variables represent and remove the original variables. The following variablese will be created:
+
+- AVG_BILL: The average bill over over the six month period for each customer
+- AVG_BILL_TO_LIMIT: The AVG_BILL variable divided by that individual customer's credit limit
+- PAY_TO_BILL: Average Payment made over the 6 months divided by the AVG_BILL
+- INC_COUNT: It may also be worthwile to see for how many months the customer's bill increased from one month to the next. This shows how often a customer is spending more than they payoff each month. If this occurs for five consecutive months it may indicate a worsening financial condition.
+
+It does appear that a relationship is possible between the Average Bill to Limit and the default rate. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10}
+cc_dataR <- cc_dataR %>% 
+  mutate(AVG_BILL = rowMeans(cbind(BILL_AMT1, BILL_AMT2, BILL_AMT3, BILL_AMT4, BILL_AMT5, BILL_AMT6)), 
+         AVG_BILL_TO_LIMIT = rowMeans(cbind(BILL_AMT1, BILL_AMT2, BILL_AMT3, BILL_AMT4, BILL_AMT5, BILL_AMT6))
+         / LIMIT_BAL,
+         PAY_TO_BILL = (rowMeans(cbind(PAY_AMT1, PAY_AMT2, PAY_AMT3, PAY_AMT4, PAY_AMT5, PAY_AMT6))+1)/
+           (rowMeans(cbind(BILL_AMT1, BILL_AMT2, BILL_AMT3, BILL_AMT4, BILL_AMT5, BILL_AMT6))+1))
+
+ggplot(cc_dataR, aes(x = AVG_BILL_TO_LIMIT)) +
+  geom_histogram(shape=21, size = 4, 
+     aes(fill = factor(DEFAULT))) + 
+  labs(x = 'Average Bill to Limit') +
+  theme_gdocs()
+
+
+```
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+cc_dataR$INC_COUNT = 0
+for (i in 1:5) {
+  cc_dataR$INC_COUNT <- ifelse(cc_dataR[[paste("BILL_AMT",i, sep = "")]] > cc_dataR[[paste("BILL_AMT",i+1, sep = "")]],
+    cc_dataR$INC_COUNT +1, cc_dataR$INC_COUNT +0)
+}
+
+ggplot(cc_dataR, aes(x = INC_COUNT, fill = factor(DEFAULT))) +
+  geom_bar() +
+  labs(x = 'Increase in Bill Count') +
+  theme_pander()
+
+```
+
+
+
+
+```{r dataprep, echo=FALSE, message=FALSE, warning=FALSE, fig.height=8, fig.width=10}
+
+cc_dataN <- cc_dataR %>% 
+  dplyr::select(-starts_with('BILL_AMT'))
+
+# rename the response variable DEFAULT to target
+cc_dataN$target <- factor(cc_dataR$DEFAULT)
+cc_dataN$DEFAULT <- NULL
+
+#colnames(cc_dataN)[15] <- "target"
+
+#Remove rows with infinite values. Only 3 observations
+cc_dataN <- cc_dataN[Reduce(`&`, lapply(cc_dataN, function(x) !is.na(x)  & is.finite(x))),]
+
+#Normalize dataset
+maxValue <- apply(cc_dataN, 2, max)  #CreditCardnn
+minValue <- apply(cc_dataN, 2, min)   #CreditCardnn
+
+
+smp <- floor(0.70 * nrow(cc_dataN))
+set.seed(4784)
+train_index <- sample(seq_len(nrow(cc_dataN)), size = smp, replace = FALSE)
+
+# create training and test datasets 
+train_all <- cc_dataN[train_index, ]
+test_all <- cc_dataN[-train_index, ]
+
+## Scale Test and Train for Neural Net 
+
+train_nn <- train_all
+train_nn$target <- as.integer(train_nn$target)
+
+test_nn <- test_all
+test_nn$target <- as.integer(test_nn$target)
+
+#Normalize dataset
+maxValueTrain <- apply(train_nn, 2, max)  #CreditCardnn
+minValueTrain <- apply(train_nn, 2, min)   #CreditCardnn
+
+maxValueTest <- apply(test_nn, 2, max)  #CreditCardnn
+minValueTest <- apply(test_nn, 2, min)   #CreditCardnn
+
+train_nn <- as.data.frame(scale(train_nn, center = minValueTrain, scale = maxValueTrain - minValueTrain))
+
+test_nn <- as.data.frame(scale(test_nn, center = minValueTest, scale = maxValueTest - minValueTest))
+
+
+```
+
+#Experimentation and Results
+
+### Binary Logistic Regression Model
+
+```{r binary-logistic, echo=FALSE, message=FALSE, warning=FALSE} 
+
+model2 <- glm(target ~ .,
+             data=cc_dataN,
+             family = binomial(link="logit"))
+
+#VIF measures are now acceptable
+summary(model2)
+car::vif(model2)
+
+
+#Stepwise variable selection of model2
+model2step <- step(model2, direction="both", trace=0)
+
+summary(model2step)
+
+#modified model metrics with stepwise variable selection
+
+m2step_metrics <- calc_metrics("Model2 - STEP", model2step, test_all, train_all)
+all_model_metrics <- rbind(all_model_metrics, m2step_metrics[[1]])
+
+# capture the actual vs. predicted values
+all_predictions[[1]] <- m2step_metrics[[3]]
+
+# same for the confusion matrix, later used in the fourfoldplots in the metrics section
+all_cm[[1]] <- m2step_metrics[[4]]
+
+
+plot_varImp(model2)
+
+```
+
+```{r binary-logistic-out, echo=FALSE, message=FALSE, warning=FALSE} 
+
+kable(m2step_metrics[[1]])
+
+```
+
+### Ridge and Lasso Regularization 
+
+Regularization is applied using the same parameters established in the binary logistic regression model but attempts to minimized the impact of the coefficients. Both Ridge and Lasso approaches attempt to reduce overfitting by applying a penalty to the parameter estimates. This is a tunable parameter know as {\sigma\} 
+
+Ridge regression applies standardization to the predictor variables and uses L2 Regularization by  applying a penalty term where the parameter estimates are only allowed to increase if there is a proportional decrease in the sum of squared errors (Kuhn et al 2013).
+
+Ridge regression has benefits when multicollinearity exists among the predictors and overall seeks to reduce model complexity.
+
+Lasso, or least absolute shrinkage and selection operator, is similar to Ridge and applies a similar penalty but uses L1 regularization.  Lasso has the added benefit of feature selection  which ridge does not.
+
+```{r ridge, echo=FALSE, message=FALSE, warning=FALSE}
+
+x <- as.matrix(train_all[,-23]) # Removes class
+y <- as.double(as.matrix(train_all[, 23])) # Only class
+
+# Fitting the model (Ridge: Alpha = 0)
+
+cv.ridge <- cv.glmnet(x, y, family='binomial', alpha=0,  standardize=TRUE, type.measure='mse',nfolds=5)  
+
+
+#create test data from test_all, removing the response variable
+x_test <- as.matrix(test_all[,-23]) # Removes class
+y_test <- as.double(as.matrix(test_all[, 23])) # Only class
+
+#predict class, type="class"
+
+m3ridge_metrics <- calc_metrics_2("Model3 - Ridge", cv.ridge, x_test, x, 
+                                    cv.ridge$lambda.min, y_test)
+
+
+all_model_metrics <- rbind(all_model_metrics, m3ridge_metrics[[1]])
+
+# capture the actual vs. predicted values
+all_predictions[[2]] <- m3ridge_metrics[[3]]
+
+# same for the confusion matrix, later used in the fourfoldplots in the metrics section
+all_cm[[2]] <- m3ridge_metrics[[4]]
+
+
+#plot(fit.lasso, xvar="lambda")
+#plot(fit10, main="LASSO")
+
+#plot(cv.ridge$glmnet.fit, xvar="lambda")
+#plot(fit0, main="Ridge")
+
+```
+
+### LASSO
+
+
+
+# https://elmorigin.weebly.com/uploads/5/2/9/5/52952487/fernandez-delgado_jmlr_2014.pdf
+
+```{r lasso, echo=FALSE, message=FALSE, warning=FALSE}
+
+cv.lasso <- cv.glmnet(x, y, family='binomial', alpha=1,  nfolds=5, standardize=TRUE, 
+                       type.measure='mse' )  
+
+
+
+#lasso_model <- cv.lasso$glmnet.fit
+#summary(lasso_model)
+
+#create test data from test_all, removing the response variable
+x_test <- as.matrix(test_all[,-23]) # Removes class
+y_test <- as.double(as.matrix(test_all[, 23])) # Only class
+
+m4lasso_metrics <- calc_metrics_2("Model4 - Lasso", cv.lasso, x_test, x, 
+                                    cv.lasso$lambda.1se, y_test)
+
+all_model_metrics <- rbind(all_model_metrics, m4lasso_metrics[[1]])
+
+# capture the actual vs. predicted values
+all_predictions[[3]] <- m4lasso_metrics[[3]]
+
+# same for the confusion matrix, later used in the fourfoldplots in the metrics section
+all_cm[[3]] <- m4lasso_metrics[[4]]
+
+```
+```{r}
+
+par(mfrow=c(1,2))
+
+# Results
+plot(cv.ridge)
+
+# Results
+plot(cv.lasso)
+
+```
+
+
+```{r echo=FALSE}
+
+ridge_coef <- as.data.frame(as.matrix(coef(cv.ridge, s=cv.ridge$lambda.min)))
+ridge_coef$Variable <- rownames(ridge_coef); rownames(ridge_coef) <- NULL
+
+lasso_coef <- as.data.frame(as.matrix(coef(cv.lasso, s=cv.lasso$lambda.1se)))
+lasso_coef$Variable <- rownames(lasso_coef); rownames(lasso_coef) <- NULL
+
+coef_all <- merge(ridge_coef,lasso_coef, by="Variable") 
+coef_all <- coef_all %>% dplyr::select(Variable, Ridge=`1.x`, Lasso=`1.y`) %>% filter(Variable!="(Intercept)")
+```
+
+```{r echo=FALSE}
+kable(coef_all, caption='Coefficient comparison between Ridge and Lasso')
+
+```
+
+We see that the feature selection of Lasso removed PAY_6, PAY_AMT3, EDU_ADV_DEGREE, AVG_BILL_TO_LIMIT, and PAY_TO_BILL as predictors in the model.
+
+
+## Regression Tree
+
+A basic regression tree was used on this data set to predict default, which partitions the data into smaller groups that are more homogenous with respect to the response. The data were split into training and test sets at a 70:30 ratio.
+
+### grow tree
+
+```{r desicion-tree}
+
+m5 <- rpart(target ~ .,  data = train_all, method = 'class')
+m5
+
+
+```
+
+
+#### Plot and summarize
+
+```{r}
+# additional plots
+par(mfrow=c(1,2)) 
+rsq.rpart(m5)
+```
+
+The relative error is $1-R^2$, similar to linear regression. The xerror is related to the  [PRESS](https://en.wikipedia.org/wiki/PRESS_statistic) statistic. The split from 0 to 1 appears to have the largest improvement of fit. The split from 1 to 2 is much less of an improvement.
+
+The figure to the left shows a visual of the aforementioned first split providing more information than the second split. The figure to the right shows if a tree should be pruned, and in our case it does not. 
+```{r}
+plotcp(m5) # visualize cross-validation results
+
+```
+
+Looking at the `plotcp` function we can take a look and see if the tree needs pruning, and we can see 3 nodes appears to be the ideal size.
+
+```{r}
+summary(m5, cp = 0.1) # detailed summary of splits
+#print(m5)
+```
+
+Turning to the summary, the first split partitions the 20998 observations into groups of 18789 and 2209 (nodes 2 and 3) with mean values of 0.167 and 0.698, respectively. Variables `PAY_0` and `PAY_2` are weighted highest in importance.
+
+```{r}
+
+# Mike - this plot throws an error "need finite ylim"
+
+
+
+#plot(predict(m1), resid(m1))
+#temp <- m1$frame[m1$frame$var == '<leaf>',]
+#axis(3, at = temp$yval, as.character(row.names(temp)))
+#mtext('leaf number', side = 3, line = 3)
+#abline(h = 0, lty = 2)
+
+```
+
+A residual plot of predicted values vs. residuals shows 
+
+```{r}
+rpart.plot(m5, type=3, digits=3, fallen.leaves=TRUE, main='Regression Tree for Credit Card Defaults')
+
+```
+
+Lastly in the plotting section is a visual of the regression tree. The model tells us that if $PAY_-0\geq 1.5$, there is a 69.8% chance the customer will default. Approx 10.5% of the data set falls under this threshold. On the other hand if $PAY_-0< 1.5$, the model takes a look at the customers $`PAY_-2$ scores. If $PAY_-2\geq1.5$ there is a 41.6% chance the customer will default, which comprises of 7.5% of the dataset. Lastly if $PAY_-2<1.5$ there is only a 14.5% chacne of default, which 81.9% of the data set falls under.
+
+
+###Predict
+We run prediction on the test data, find the mean absolute error from original data set to predictions and obtain an $MSE$ of 0.139.
+```{r}
+
+
+m5_metrics <- calc_metrics_3("Model5 - DT", m5, test_all, train_all, "decision.tree")
+
+all_model_metrics <- rbind(all_model_metrics, m5_metrics[[1]])
+
+# capture the actual vs. predicted values
+all_predictions[[4]] <- m5_metrics[[3]]
+
+# same for the confusion matrix, later used in the fourfoldplots in the metrics section
+all_cm[[4]] <- m5_metrics[[4]]
+
+
+```
+
+
+
+
+
+
+#Neural Network
+A Neural Netowrk model was used to fit the credit card dataset. A neural network processes the data on several levels.The first layer of the neural network receives the predictor variables which are processed and passed to the hidden layer. The hidden layer passes the processed predictor values to the last layer where the output is produced
+
+A neural network model was chosen to predict default based on its ability to learn form the information provided.
+
+##Data Preprocessing
+As neural networks use activation functions between -1 and +1 - the variables were scaled down. This is done to prevent the neural network from spend training iterations doing the scaling.
+
+Min-max normalziation was used to transform the data into a common range.This removes the scaling effect from all the variables.
+
+The normalzied data returns a matrix that was converted to a dataframe so that the neural network model can be computed. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+allVars <- colnames(cc_dataN)
+predictorVars <- allVars[!allVars%in%'target']
+predictorVars <- paste(predictorVars, collapse = "+")
+(f <- as.formula(paste("target~", predictorVars, collapse = "+")))
+
+```
+##Train the Neural Network
+The neural network was calculated using the neuralnet library. There are 2 hidden units in the third layer and 4 hidden units in the second layer. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+neuralModel <- neuralnet(formula = f,linear.output = T, data = train_nn)
+
+```
+
+##Plot Neural Network
+The neural network plot represents the weights of each connection. The visualization show the 3 hidden layers. 
+
+The black lines of the model represent the connections with weights.The weights are calculated using the back propagation algorithm.  The blue line displays the bias term
+
+##Nueral Network Matrix
+The matrix shows the training process required 13,017 steps until all absolute partial derivatives of the error function were smaller than 0.01, which is the default threshold. The estimated weights ranged between -1.38 and 0.75
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+plot(neuralModel)
+
+
+#kable(neuralModel$result.matrix)
+```
+##Generalized Weights
+The gerneralized weights for the demographic covariates shows that they all have and effect on the target varaible.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+# Sharon - sorry this changed when I switched to using the train_all dataset.  
+# These variables were dropped as part of variable selection
+# par(mfrow=c(2,2))
+# gwplot(neuralModel, selected.covariate="SEX", min=-2.5, max=5)
+# gwplot(neuralModel, selected.covariate="EDUCATION",
+#               min=-2.5, max=5)
+# gwplot(neuralModel, selected.covariate="MARRIAGE",
+#               min=-2.5, max=5)
+# gwplot(neuralModel, selected.covariate="AGE",
+#              min=-2.5, max=5)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+m6_metrics <- calc_metrics_3("Model6 - NNet", 
+                             neuralModel, test_nn[, -23], train_nn, "nnet", test_nn[, 23])
+
+all_model_metrics <- rbind(all_model_metrics, m6_metrics[[1]])
+
+# capture the actual vs. predicted values
+all_predictions[[5]] <- m6_metrics[[3]]
+
+# same for the confusion matrix, later used in the fourfoldplots in the metrics section
+all_cm[[5]] <- m6_metrics[[4]]
+
+```
+
+## All Metrics ##
+
+```{r fourfoldplots}
+par(mfrow=c(1,2))
+
+fourfoldplot(m2step_metrics[[4]]$table, main="Logistic Regression")
+
+fourfoldplot(m3ridge_metrics[[4]]$table, main="Ridge Regression")
+
+fourfoldplot(m4lasso_metrics[[4]]$table, main="LASSO")
+
+fourfoldplot(m5_metrics[[4]]$table, main="Decision Tree")
+
+fourfoldplot(m6_metrics[[4]]$table, main="NeuralNet")
+
+````
+
+
+
+```{r}
+perf_metrics1 <- dplyr::select(all_model_metrics,
+                  Model,	Accuracy,	F1Score,	Kappa,	Sensitivity,	Specificity,	BalancedAccuracy)
+
+perf_metrics2 <- all_model_metrics %>% transmute(Model, "Fale-Positive Rate" = 1- Specificity, Youden,
+                                                 PosPredValue, NegPredValue)
+
+# write the perf metrics out to csv to pull into the report as a table
+write.csv(perf_metrics1, 'model_perf_metrics1.csv', row.names = F)
+
+write.csv(perf_metrics2, 'model_perf_metrics2.csv', row.names = F)
+
+```
+
+
+
+
+#References
+https://datascienceplus.com/fitting-neural-network-in-r/
+https://www.youtube.com/watch?v=LTg-qP9iGFY
+https://www.analyticsvidhya.com/blog/2017/09/creating-visualizing-neural-network-in-r/
+
+https://stats.stackexchange.com/questions/21717/how-to-train-and-validate-a-neural-network-model-in-r
+http://blog.revolutionanalytics.com/2016/03/com_class_eval_metrics_r.html
+
+
+Altabrawee, H. (2016).  Performance Evaluation of Fourteen Machine Learning Algorithms on Credit Card Default Classification.  Education College Journal, 463-473
+
+Butaru, F., Chen, Q., Clark, B., Das, S., Lo, A., & Siddique, A. (2015). Risk and Risk Management in the Credit Card Industry. doi:10.3386/w21305
+
+Koklu, M., & Sabanci, K. (2016). Estimation of Credit Card Customers Payment Status by Using kNN and MLP. International Journal of Intelligent Systems and Applications in Engineering, 249-251
+
+Lusis. (2017, April 20). A Comparison of Machine Learning Techniques for Credit Card Fraud Detection. Retrieved from http://www.lusispayments.com/uploads/4/4/8/2/44826195/a_comparison_of_machine_learning_techniques_for_credit_card_fraud_detection.pdf
+
+Padmaja, T. M., Dhulipalla, N., Krishna, P. R., Bapi, R. S., & Laha, A. (2007). An Unbalanced Data Classification Model Using Hybrid Sampling Technique for Fraud Detection. Lecture Notes in Computer Science, 341-348. doi:10.1007/978-3-540-77046-6_43
+
+Pasha, M., Fatima, M., Dogar, A. M., & Shahzad, F. (2017, March). Performance Comparison of Data Mining Algorithms for the Predictive Accuracy of Credit Card Defaulters. Retrieved from http://paper.ijcsns.org
+
+Sahin, Yusuf &Duman, Ekrem. (2011). Detecting credit card fraud by ANN and logistic regression. INISTA 2011 - 2011 International Symposium on INnovations in Intelligent SysTems and Applications. 10.1109/INISTA.2011.5946108.
+
+Seeja, K. R., & Zareapoor, M. (2014). FraudMiner: A Novel Credit Card Fraud Detection Model Based on Frequent Itemset Mining. The Scientific World Journal, 2014, 252797. http://doi.org/10.1155/2014/252797
+
+Zareapoor, M., & Shamsolmoali, P. (2015). Application of Credit Card Fraud Detection: Based on Bagging Ensemble Classifier. Procedia Computer Science, 48, 679-685. doi:10.1016/j.procs.2015.04.201
+
+
+
+
